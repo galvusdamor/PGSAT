@@ -769,6 +769,31 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task) :
 #define equalsPreconditions "equals preconditions"
 #define staticPrecondition "static preconditions"
 #define oneAction "one Action"
+#define nullary "nullary"
+
+
+vector<vector<int>> PartiallyGroundedSAT::generateFactVars(sat_capsule & capsule, int timestep){
+	vector<vector<int>> mutexPredicateVarsTime(all_facts.size());
+	for (size_t predicate = 0; predicate < all_facts.size(); predicate++){
+	    int grounded_mutex_predicate_var;
+	    grounded_mutex_predicate_var = capsule.new_variable();
+	    mutexPredicateVarsTime[predicate].push_back(grounded_mutex_predicate_var);
+	    string arguments = "("; 
+	    for(size_t object = 0 ; object < all_facts[predicate].second.size() ; object++){
+			if (object) arguments += ", ";
+	        arguments += task.objects[satObjectToPWLObject[all_facts[predicate].second[object]]].getName();
+	    }
+	    arguments += ")";
+	    DEBUG(capsule.registerVariable(grounded_mutex_predicate_var,"predicate@" + to_string(timestep) + "-" + task.predicates[all_facts[predicate].first].getName() + arguments) );
+	}
+
+	
+
+
+	return mutexPredicateVarsTime;
+}
+
+
 
 utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool optimal, bool incremental) {
 	cout << "Not yet implemented!" << endl;
@@ -779,9 +804,28 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
     PartiallyGroundedSAT pgs = PartiallyGroundedSAT(task);
     void* solver = ipasir_init();
 	sat_capsule capsule;
+	int beforeClause = get_number_of_clauses();
+
+	vector<vector<int>> previousTimeMutexPredicateVars = generateFactVars(capsule,0);
+	// TODO: assert that the initial state is true.
+	// one for every mutex should be true
+
+	// nullary predicates initial state
+	std::unordered_map<int,int> lastNullary;
+	for (int n : task.nullary_predicates){
+		int nullaryInInit = capsule.new_variable();
+		lastNullary[n] = nullaryInInit;
+		DEBUG(capsule.registerVariable(nullaryInInit, "nullary#" + to_string(n) + "_" + to_string(0)));
+
+		if (task.initial_state.get_nullary_atoms()[n])
+			assertYes(solver,nullaryInInit);
+		else
+			assertNot(solver,nullaryInInit);
+	}
+
+
 
 	for (int timestep = 0; timestep < timesteps; timestep++){
-		int beforeClause = get_number_of_clauses();
 
         std::vector<std::map<int,int>> parameterVarsTime(numberOfArgumentPositions);
         for (int paramter = 0; paramter < numberOfArgumentPositions; paramter++){
@@ -1007,32 +1051,117 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
         }
 
 
-        vector<vector<int>> mutexPredicateVarsTime(pgs.all_facts.size());
-        for (size_t predicate = 0; predicate < pgs.all_facts.size(); predicate++){
-            int grounded_mutex_predicate_var;
-            grounded_mutex_predicate_var = capsule.new_variable();
-            mutexPredicateVarsTime[predicate].push_back(grounded_mutex_predicate_var);
-            string arguments = "(" + task.objects[satObjectToPWLObject[pgs.all_facts[predicate].second[0]]].getName();
-            for(size_t object = 1 ; object < pgs.all_facts[predicate].second.size() ; object++){
-                arguments += ", " + task.objects[satObjectToPWLObject[pgs.all_facts[predicate].second[object]]].getName();
-            }
-            arguments += ")";
-            DEBUG(capsule.registerVariable(grounded_mutex_predicate_var,"predicate@" + to_string(timestep) + "-" + task.predicates[all_facts[predicate].first].getName() + arguments) );
-        }
-
-        /* vector<vector<int>> staticPredicates;
+		// generate variables for successor state
+		vector<vector<int>> currentTimeMutexPredicateVars = generateFactVars(capsule,timestep+1);
+		std::unordered_map<int,int> currentNullary;
+		for (int n : task.nullary_predicates){
+			int nullVar = capsule.new_variable();
+			currentNullary[n] = nullVar;
+			DEBUG(capsule.registerVariable(nullVar,	"nullary#" + to_string(n) + "_" + to_string(timestep+1)));
+		}
 
 
-        for(size_t action = 0 ; action < task.actions.size() ; action++){
-            for(size_t pre_condition = 0 ; pre_condition < task.actions[action].precondition.size() ; pre_condition++){
-                
-            }
-        } */
+		// generate clauses for preconditions
+        for (size_t action = 0; action < task.actions.size(); action++){
+            int actionVar = actionVarsTime[action];
+
+            /////// non-special PRECONDITIONS
+            const auto precs = task.actions[action].get_precondition();
+	        for (size_t prec = 0; prec < precs.size(); prec++) {
+            	DEBUG(cout << "\t\tprecondition #" << prec << endl);
+            	
+				const auto & precObjec = precs[prec];
+				int predicate = precObjec.predicate_symbol;
+				if (task.predicates[predicate].getName().rfind("type@", 0) == 0) continue;
+				if (task.predicates[predicate].getName().rfind("=", 0) == 0) continue;
+				if (task.predicates[predicate].isStaticPredicate()) continue;
+
+				// the precondition is "normal"
+				//
+				// TODO action implies its preconditions
+				// for every assignment of the parameters of the precondition assert that the respective fact is true
+				// This should involve iterating over all groundings of the precondition ... so this might be expensive
+			}
+
+			map<int,vector<int>> adders, deleters;
+
+			const auto effs = task.actions[action].get_effects();
+	        for (size_t eff = 0; eff < effs.size(); eff++) {
+            	DEBUG(cout << "\t\teffect #" << eff << endl);
+            	
+				const auto & effObjec = effs[eff];
+
+				if (effObjec.negated){
+					// TODO deleting effect
+				} else {
+					// TODO adding effects
+					//
+					int fact = -1; // the number of the fact this action adds
+					int causeVariable = capsule.new_variable();
+					// TODO register
+					adders[fact].push_back(causeVariable);
+					implies(solver,causeVariable,actionVar);
+					implies(solver,causeVariable,parameterVar1);
+					implies(solver,causeVariable,parameterVar2); // and so on
+				}
+
+			}
+
+			// nullary preconditions
+			for (int p : *setPosNullaryPrec[action])
+				implies(solver,actionVar,lastNullary[p]);
+			for (int p : *setNegNullaryPrec[action])
+				impliesNot(solver,actionVar,lastNullary[p]);
+
+			// nullary effects
+			for (int p : *setPosNullaryEff[action])
+				implies(solver,actionVar,currentNullary[p]);
+			for (int p : *setNegNullaryEff[action])
+				impliesNot(solver,actionVar,currentNullary[p]);
+			clauseNumber(nullary);
+		}
+
+		// TODO Frame axioms
+		// Types: f@t and -f@t+1 -> disjunction over deleters
+		// Types: -f@t and f@t+1 -> disjunction over adders
+		// cause variable C  from the adder/deleter lists
+		// c -> action
+		// c -> parameters
+		// f@t and -f@t+q -> c_1 v c_2 v c_3 v ...
+
+
+		for (int n : task.nullary_predicates){
+			vector<int> adder;
+			for (int a : nullaryAchiever[n])
+			   adder.push_back(actionVarsTime[a]);
+			impliesPosAndNegImpliesOr(solver,currentNullary[n], lastNullary[n], adder);
+
+			vector<int> deleter;
+			for (int d : nullaryDestroyer[n])
+			   deleter.push_back(actionVarsTime[d]);
+			impliesPosAndNegImpliesOr(solver,lastNullary[n], currentNullary[n], deleter);
+		}
+		lastNullary = currentNullary;
+		clauseNumber(nullary);
+		
+
+
 
         atMostOne(solver,capsule,actionVarsTime);
         atLeastOne(solver,capsule,actionVarsTime);
 		clauseNumber(oneAction);
+
+		swap(previousTimeMutexPredicateVars,currentTimeMutexPredicateVars);
     }
+
+	// TODO: assert that the goal is true. This should reference the previousTimeMutexPredicateVars
+
+	// nullary goals
+	for (int g : task.goal.positive_nullary_goals)
+		assertYes(solver,lastNullary[g]);	
+    for (int g : task.goal.negative_nullary_goals)
+		assertNot(solver,lastNullary[g]);	
+	clauseNumber(nullary);
 
 
     DEBUG(capsule.printVariables());

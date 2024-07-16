@@ -13,6 +13,7 @@
 class PartiallyGroundedSAT : public BaseSATEncoding{
 private:
     std::vector<std::pair<int, std::vector<int>>> all_facts;
+	std::vector<std::vector<int>> generateFactVars(sat_capsule & capsule, int timestep);
 public:
     PartiallyGroundedSAT(const Task& task);
 	utils::ExitCode solve(const Task& task, int limit, bool optimal, bool incremental);

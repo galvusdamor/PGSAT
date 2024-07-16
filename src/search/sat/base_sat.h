@@ -38,6 +38,16 @@ class BaseSATEncoding{
 	    int maxPrec = 0;
 	    int numberOfArgumentPositions = 0;
 
+
+		// Nullary predicate handling
+		std::vector<std::unordered_set<int>*> setPosNullaryPrec;
+	    std::vector<std::unordered_set<int>*> setNegNullaryPrec;
+	    std::vector<std::unordered_set<int>*> setPosNullaryEff;
+	    std::vector<std::unordered_set<int>*> setNegNullaryEff;
+	
+		std::unordered_map<int,std::vector<int>> nullaryAchiever;
+		std::unordered_map<int,std::vector<int>> nullaryDestroyer;
+
     private:
         void makeObjectsContinuous();
         void reinferTypeHierarchy();
@@ -45,6 +55,7 @@ class BaseSATEncoding{
         void computedirectParents();
 		void computeSupportingTuples();
 		void computeActionArgumentStructure();
+		void createIterableNullaries();
 
         int numTypes;
 

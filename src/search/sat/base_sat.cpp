@@ -21,6 +21,8 @@ BaseSATEncoding::BaseSATEncoding(const Task & _task): task(_task){
 	computeActionArgumentStructure();
 	cout << "- compute supporting tuples from init for preconditions..." << endl;
 	computeSupportingTuples();
+	cout << "- create datastructures for nullary predicates..." << endl;
+	createIterableNullaries();
 
     // Debug output
     for (int i = 0; i < numTypes; i++) {
@@ -319,4 +321,41 @@ void BaseSATEncoding::computeActionArgumentStructure(){
 			cout << " " << a << "->" << b;
 		cout << endl;
 	}
+}
+
+
+void BaseSATEncoding::createIterableNullaries() {
+    for (size_t a = 0; a < task.actions.size(); a++) {
+        setPosNullaryPrec.push_back(new unordered_set<int>);
+        setNegNullaryPrec.push_back(new unordered_set<int>);
+        setPosNullaryEff.push_back(new unordered_set<int>);
+        setNegNullaryEff.push_back(new unordered_set<int>);
+
+        auto posPrec = task.actions[a].get_positive_nullary_precond();
+        for (size_t f = 0; f < posPrec.size(); f++) {
+            if (posPrec[f]) {
+                setPosNullaryPrec[a]->insert(f);
+            }
+        }
+        auto negPrec = task.actions[a].get_negative_nullary_precond();
+        for (size_t f = 0; f < negPrec.size(); f++) {
+            if (negPrec[f]) {
+                setNegNullaryPrec[a]->insert(f);
+            }
+        }
+        auto posEff = task.actions[a].get_positive_nullary_effects();
+        for (size_t f = 0; f < posEff.size(); f++) {
+            if (posEff[f]) {
+                setPosNullaryEff[a]->insert(f);
+				nullaryAchiever[f].push_back(a);
+            }
+        }
+        auto negEff = task.actions[a].get_negative_nullary_effects();
+        for (size_t f = 0; f < negEff.size(); f++) {
+            if (negEff[f]) {
+                setNegNullaryEff[a]->insert(f);
+				nullaryDestroyer[f].push_back(a);
+            }
+        }
+    }
 }
