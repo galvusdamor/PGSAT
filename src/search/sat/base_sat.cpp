@@ -17,9 +17,12 @@ BaseSATEncoding::BaseSATEncoding(const Task & _task): task(_task){
     assignPWLObjectsToTypes();
     cout << "- make objects in type continuous..." << endl;
     makeObjectsContinuous();
+	cout << "- computing action argument structure..." << endl;
+	computeActionArgumentStructure();
+	cout << "- compute supporting tuples from init for preconditions..." << endl;
+	computeSupportingTuples();
 
     // Debug output
-
     for (int i = 0; i < numTypes; i++) {
         cout << task.type_names[i] << " -> {";
         bool first = true;
@@ -196,4 +199,124 @@ int BaseSATEncoding::sortObjs(int index, int type, std::unordered_set<int>* chil
     }
     upperTypeindex[type] = index - 1;
     return index;
+}
+
+void BaseSATEncoding::computeSupportingTuples(){
+	preconditionSupportingTuplesFromInit.resize(task.actions.size());
+	for (size_t action = 0; action < task.actions.size(); action++){
+        const auto precs = task.actions[action].get_precondition();
+		
+		preconditionSupportingTuplesFromInit[action].resize(precs.size());
+        for (size_t prec = 0; prec < precs.size(); prec++) {
+        	
+			const auto & precObjec = precs[prec];
+			int predicate = precObjec.predicate_symbol;
+			if (task.predicates[predicate].getName().rfind("type@", 0) == 0) continue;
+			if (task.predicates[predicate].getName().rfind("=", 0) == 0) continue;
+
+
+			vector<pair<vector<int>,int>> & mySupportingTuples = preconditionSupportingTuplesFromInit[action][prec];
+
+			// TODO: sind die nicht nach den predikaten sortiert????
+			for (size_t i = 0; i < task.get_static_info().get_relations().size(); i++) {
+			    auto rel = task.get_static_info().get_relations()[i];
+			    auto tuple = task.get_static_info().get_tuples_of_relation(i);
+
+				if (predicate != rel.predicate_symbol) continue;
+				
+				// this is the correct predicate
+			    for (vector<int> groundA: tuple) {
+					bool notApplicable = false;
+					for (size_t j = 0; j < groundA.size(); j++){
+						int myObjIndex = pwlObjToSATObject[groundA[j]];
+						if (precObjec.arguments[j].constant){
+							if (precObjec.arguments[j].index != groundA[j])
+								notApplicable = true;
+						} else {
+							int myParam = actionArgumentPositions[action][precObjec.arguments[j].index];
+							if (myObjIndex < lowerTypeindex[typeOfArgument[myParam]] ||
+									myObjIndex > upperTypeindex[typeOfArgument[myParam]])
+								notApplicable = true;
+						}
+					}
+			    	
+					if (notApplicable) continue;
+					mySupportingTuples.push_back({groundA,-1}); // static ..
+				}
+			}
+
+			int currentStartingPos = 0;
+			for (size_t i = 0; i < task.initial_state.get_relations().size(); i++) {
+			    auto rel = task.initial_state.get_relations()[i];
+			    auto tuple = task.initial_state.get_tuples_of_relation(i);
+				
+				if (predicate != rel.predicate_symbol) {
+					currentStartingPos += tuple.size();
+					continue;
+				}
+			    
+				for (vector<int> groundA: tuple) {
+					bool notApplicable = false;
+					for (size_t j = 0; j < groundA.size(); j++){
+						int myObjIndex = pwlObjToSATObject[groundA[j]];
+						if (precObjec.arguments[j].constant){
+							if (precObjec.arguments[j].index != groundA[j])
+								notApplicable = true;
+						} else {
+							int myParam = actionArgumentPositions[action][precObjec.arguments[j].index];
+							if (myObjIndex < lowerTypeindex[typeOfArgument[myParam]] ||
+									myObjIndex > upperTypeindex[typeOfArgument[myParam]])
+								notApplicable = true;
+						}
+					}
+			    	
+					if (notApplicable) {
+						currentStartingPos++;
+						continue;
+					}
+			    	mySupportingTuples.push_back({groundA,currentStartingPos++});
+			    }
+			}
+		}
+	}
+}
+
+void BaseSATEncoding::computeActionArgumentStructure(){
+	map<int,int> maxNum;
+	map<int,int> objCount;
+
+    for (auto a: task.actions) {
+        maxArity = max(maxArity, (int) a.get_parameters().size());
+        maxPrec = max(maxPrec, (int) a.get_precondition().size());
+		
+		map<int,int> thisCount;
+		for (auto para : a.get_parameters())
+			thisCount[para.type] += 1;
+
+		for (auto p : thisCount)
+			if (maxNum[p.first] < p.second)
+				maxNum[p.first] = p.second;
+    }
+
+	for (auto p : maxNum){
+		firstArgumentOfType[p.first] = numberOfArgumentPositions;
+		for (int i = numberOfArgumentPositions; i < numberOfArgumentPositions + p.second; i++)
+			typeOfArgument[i] = p.first;
+		numberOfArgumentPositions += p.second;
+	}
+
+
+	for (auto a: task.actions) {
+		map<int,int> thisCount;
+		for (auto para : a.get_parameters()){
+			actionArgumentPositions[a.get_index()][para.index] = firstArgumentOfType[para.type] + thisCount[para.type];
+			thisCount[para.type] += 1;
+		}
+
+		
+		cout << "Action #" << a.get_index() << " "  << a.get_name() << ":";
+		for (auto [a,b] : actionArgumentPositions[a.get_index()])
+			cout << " " << a << "->" << b;
+		cout << endl;
+	}
 }

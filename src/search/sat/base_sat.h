@@ -3,6 +3,7 @@
 
 #include <vector>
 #include <set>
+#include <map>
 #include "../task.h"
 
 class BaseSATEncoding{
@@ -26,11 +27,24 @@ class BaseSATEncoding{
         int* pwlObjToSATObject;
         int* satObjectToPWLObject;
 
+		// action -> precondition -> list of facts that are true in the initial state.
+		// each fact is a pair of (1) its arguments and (2) its index for the deleter in the lifted AC encoding
+		std::vector<std::vector<std::vector<std::pair<std::vector<int>,int>>>> preconditionSupportingTuplesFromInit;
+    
+		std::map<int,std::map<int,int>> actionArgumentPositions;
+		std::map<int,int> firstArgumentOfType;
+		std::map<int,int> typeOfArgument;
+	    int maxArity = 0;
+	    int maxPrec = 0;
+	    int numberOfArgumentPositions = 0;
+
     private:
         void makeObjectsContinuous();
         void reinferTypeHierarchy();
         void assignPWLObjectsToTypes();
         void computedirectParents();
+		void computeSupportingTuples();
+		void computeActionArgumentStructure();
 
         int numTypes;
 
