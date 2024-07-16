@@ -762,8 +762,18 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task) :
 	cout << " done" << endl;
 }
 
+
+#define clauseNumber(name) clauseCounter[name]+=get_number_of_clauses()-beforeClause;beforeClause=get_number_of_clauses()
+#define atMostOneParameterValue "at most one parameter value"
+#define actionAllowedArguments "action allowed arguments"
+#define equalsPreconditions "equals preconditions"
+#define staticPrecondition "static preconditions"
+#define oneAction "one Action"
+
 utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool optimal, bool incremental) {
 	cout << "Not yet implemented!" << endl;
+
+	map<string,int> clauseCounter;
 
     int timesteps = 2;
     PartiallyGroundedSAT pgs = PartiallyGroundedSAT(task);
@@ -771,6 +781,8 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
 	sat_capsule capsule;
 
 	for (int timestep = 0; timestep < timesteps; timestep++){
+		int beforeClause = get_number_of_clauses();
+
         std::vector<std::map<int,int>> parameterVarsTime(numberOfArgumentPositions);
         for (int paramter = 0; paramter < numberOfArgumentPositions; paramter++){
             int type = typeOfArgument[paramter];
@@ -788,6 +800,8 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
             // each parameter can have at most one value
             atMostOne(solver,capsule,temp);
         }
+		clauseNumber(atMostOneParameterValue);
+		
         //parameterVars.push_back(parameterVarsTime);
 
         std::vector<int> actionVarsTime;
@@ -833,9 +847,8 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
                 }
                 impliesOr(solver,actionVar,allowed);
             }
-
-            int bef = 0;
-
+			clauseNumber(actionAllowedArguments);
+		
 
             /////// SPECIAL PRECONDITIONS
             const auto precs = task.actions[action].get_precondition();
@@ -857,18 +870,17 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
                         if (precObjec.arguments[0].constant){
                             int myObjIndex = pwlObjToSATObject[varA];
                             varB = actionArgumentPositions[action][varB];
-                            impliesNot(solver,actionVar, parameterVarsTime[varB][myObjIndex - lowerTypeindex[typeOfArgument[varB]]]);
+                            impliesNot(solver,actionVar, parameterVarsTime[varB][myObjIndex]);
                         } else if (precObjec.arguments[1].constant){
                             int myObjIndex = pwlObjToSATObject[varB];
                             varA = actionArgumentPositions[action][varA];
-                            impliesNot(solver,actionVar, parameterVarsTime[varA][myObjIndex - lowerTypeindex[typeOfArgument[varA]]]);
+                            impliesNot(solver,actionVar, parameterVarsTime[varA][myObjIndex]);
                         } else {
                             varA = actionArgumentPositions[action][varA];
                             varB = actionArgumentPositions[action][varB];
                             for(int o = max(lowerTypeindex[typeOfArgument[varA]],lowerTypeindex[typeOfArgument[varB]]);
                                     o <= min(upperTypeindex[typeOfArgument[varA]],upperTypeindex[typeOfArgument[varB]]); o++){
-                                andImpliesNot(solver,actionVar,parameterVarsTime[varA][o - lowerTypeindex[typeOfArgument[varA]]],
-                                        parameterVarsTime[varB][o - lowerTypeindex[typeOfArgument[varB]]]);
+                                andImpliesNot(solver,actionVar,parameterVarsTime[varA][o], parameterVarsTime[varB][o]);
                             }
                         }
                     } else {
@@ -876,36 +888,28 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
                         if (precObjec.arguments[0].constant){
                             int myObjIndex = pwlObjToSATObject[varA];
                             varB = actionArgumentPositions[action][varB];
-                            implies(solver,actionVar, parameterVarsTime[varB][myObjIndex - lowerTypeindex[typeOfArgument[varB]]]);
+                            implies(solver,actionVar, parameterVarsTime[varB][myObjIndex]);
                         } else if (precObjec.arguments[1].constant){
                             int myObjIndex = pwlObjToSATObject[varB];
                             varA = actionArgumentPositions[action][varA];
-                            implies(solver,actionVar, parameterVarsTime[varA][myObjIndex - lowerTypeindex[typeOfArgument[varA]]]);
+                            implies(solver,actionVar, parameterVarsTime[varA][myObjIndex]);
                         } else {
                             varA = actionArgumentPositions[action][varA];
                             varB = actionArgumentPositions[action][varB];
                             for(int o = max(lowerTypeindex[typeOfArgument[varA]],lowerTypeindex[typeOfArgument[varB]]);
                                     o <= min(upperTypeindex[typeOfArgument[varA]],upperTypeindex[typeOfArgument[varB]]); o++){
-                                andImplies(solver,actionVar,parameterVarsTime[varA][o - lowerTypeindex[typeOfArgument[varA]]],
-                                        parameterVarsTime[varB][o - lowerTypeindex[typeOfArgument[varB]]]);
-                                andImplies(solver,actionVar,parameterVarsTime[varB][o - lowerTypeindex[typeOfArgument[varB]]],
-                                        parameterVarsTime[varA][o - lowerTypeindex[typeOfArgument[varA]]]);
+                                andImplies(solver,actionVar,parameterVarsTime[varA][o], parameterVarsTime[varB][o]);
+                                andImplies(solver,actionVar,parameterVarsTime[varB][o], parameterVarsTime[varA][o]);
                             }
                         }
                     }
 		
-					//equalsPrecs += get_number_of_clauses() - bef;
-					//bef = get_number_of_clauses();
+					clauseNumber(equalsPreconditions);
 					continue;
 				}
 
-				// 1. Step: select the time step which supports
-				// precSupporter is a generic variable that just tells you from which timestep we take the support
-				//if (generateBaseFormula) impliesOr(solver,actionVar,precSupporter[time][prec]);
-			
-
-                if (task.predicates[predicate].isStaticPredicate()){
-                    //bef = get_number_of_clauses();
+                // special handling for static precondition
+				if (task.predicates[predicate].isStaticPredicate()){
                     if (preconditionSupportingTuplesFromInit[action][prec].size() == 0){
                         DEBUG(cout << "\t\tno init support for precondition #" << prec << " with pred " << predicate << " " << task.predicates[predicate].getName() << endl);
                         assertNot(solver,actionVar); // cannot be supported by init!
@@ -923,7 +927,7 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
                                     if (myObjIndex < lowerTypeindex[typeOfArgument[myParam]] || myObjIndex > upperTypeindex[typeOfArgument[myParam]]){
                                         assertNot(solver,actionVar);
                                     } else {
-                                        implies(solver,actionVar, parameterVarsTime[myParam][myObjIndex - lowerTypeindex[typeOfArgument[myParam]]]);
+                                        implies(solver,actionVar, parameterVarsTime[myParam][myObjIndex]);
                                     }
                                 }
                             }
@@ -936,7 +940,7 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
                                 
                                     int myObjIndex = pwlObjToSATObject[tuple[0]];
                                     int myParam = actionArgumentPositions[action][precObjec.arguments[0].index];
-                                    int constantVar = parameterVarsTime[myParam][myObjIndex - lowerTypeindex[typeOfArgument[myParam]]];
+                                    int constantVar = parameterVarsTime[myParam][myObjIndex];
                                     
                                     possibleValues.push_back(constantVar);
                                 }
@@ -961,7 +965,7 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
                                             if (precObjec.arguments[j].constant) continue;
                                             int myObjIndex = pwlObjToSATObject[tuple[j]];
                                             int myParam = actionArgumentPositions[action][precObjec.arguments[j].index];
-                                            int constantVar = parameterVarsTime[myParam][myObjIndex - lowerTypeindex[typeOfArgument[myParam]]];
+                                            int constantVar = parameterVarsTime[myParam][myObjIndex];
                                             
                                             subTuple.push_back(constantVar);
                                         }
@@ -973,9 +977,7 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
 
                                         int myObjIndex = pwlObjToSATObject[tuple[lastPos + 1]];
                                         int myParam = actionArgumentPositions[action][precObjec.arguments[lastPos + 1].index];
-                                        int localObjectNumber = myObjIndex - lowerTypeindex[typeOfArgument[myParam]];
-                                        //if (localObjectNumber >= parameterVarsTime[myParam].size()) cout << "F " << localObjectNumber << " " << parameterVarsTime[myParam].size() << endl;
-                                        int constantVar = parameterVarsTime[myParam][localObjectNumber];
+                                        int constantVar = parameterVarsTime[myParam][myObjIndex];
 
 
                                         possibleUpto[subTuple].insert(constantVar);
@@ -985,9 +987,6 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
                                     if (!precObjec.arguments[lastPos + 1].constant)
                                         for (auto & x : possibleUpto){
                                             andImpliesOr(solver,x.first,x.second);
-                                            //for (int i : x.first) cout << " - " << capsule.variableNames[i];
-                                            //for (int i : x.second) cout << " " << capsule.variableNames[i];
-                                            //cout << endl;
                                         }
 
                                     if (firstWithNonConst){
@@ -996,17 +995,13 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
                                             initial.push_back(x.first[1]);
 
                                         impliesOr(solver,actionVar,initial);
-                                        //cout << "- " << capsule.variableNames[actionVar];
-                                        //for (int i : initial) cout << " " << capsule.variableNames[i];
-                                        //cout << endl;
                                         firstWithNonConst = false;
                                     }
                                 }
                             }
                         }
-                        //staticInitSupp += get_number_of_clauses() - bef;
-                        //bef = get_number_of_clauses();
                     }
+					clauseNumber(staticPrecondition);
                 } 
             }
         }
@@ -1036,14 +1031,18 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
 
         atMostOne(solver,capsule,actionVarsTime);
         atLeastOne(solver,capsule,actionVarsTime);
-
+		clauseNumber(oneAction);
     }
-
-    //assertNot(solver,23);
-    //assertNot(solver,22);
 
 
     DEBUG(capsule.printVariables());
+
+	int totalClauses = 0;
+	for (auto [k,v] : clauseCounter){
+		cout << setw(30) << setfill('-') << k << " " << setw(8) << v << endl;
+		totalClauses += v;
+	}
+	cout << setw(30) << setfill('-') << "TOTAL CLAUSES" << " " << setw(8) << totalClauses << " not accounted for " << get_number_of_clauses() - totalClauses << endl;
 
     int state = ipasir_solve(solver);
     if (state == 10){
