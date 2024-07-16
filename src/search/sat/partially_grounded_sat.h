@@ -5,12 +5,14 @@
 #include <unordered_set>
 #include <unordered_map>
 #include <ctime>
+#include "base_sat.h"
 #include "sat_encoder.h"
 #include "../utils/system.h"
 #include "../task.h"
 
-class PartiallyGroundedSAT{
+class PartiallyGroundedSAT : public BaseSATEncoding{
 private:
+    std::vector<std::pair<int, std::vector<int>>> all_facts;
 public:
     PartiallyGroundedSAT(const Task& task);
 	utils::ExitCode solve(const Task& task, int limit, bool optimal, bool incremental);

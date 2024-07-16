@@ -75,6 +75,22 @@ void sat_capsule::printVariables(){
 	}
 	std::cout << "===========================" << std::endl;
 }
+
+void sat_capsule::printVariableTruth(void* solver){
+	for (int v = 1; v <= number_of_variables; v++){
+		int val = ipasir_val(solver,v);
+	
+		std::string s = std::to_string(v);
+		int x = 4 - s.size();
+		std::cout << "TRUTH ";
+		while (x-- && x > 0) std::cout << " ";
+		std::cout << v << ": ";
+		if (val > 0) std::cout << "    ";
+		else         std::cout << "not ";
+		std::cout << variableNames[v] << std::endl; 
+	}
+}
+
 #endif
 
 int number_of_clauses = 0;

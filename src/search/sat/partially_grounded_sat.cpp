@@ -10,6 +10,16 @@
 #include <iomanip>
 
 #include "pddl/pddl.h"
+#include "src/internal.h"
+
+extern "C"
+{
+void pddl_bliss_new_digraph(){}
+void pddl_bliss_release(){}
+void pddl_bliss_add_vertex(){}
+void pddl_bliss_add_edge(){}
+void pddl_bliss_find_automorphisms(){}
+}
 
 static const char* root_type_cppdl = "__object_cpddl";
 
@@ -36,97 +46,140 @@ static int objEq(const pddl_list_t *key1, const pddl_list_t *key2, void *_)
     return strcmp(obj1->name, obj2->name) == 0;
 }
 
+bool is_mutex_group_contained_in_assignement(pddl_lifted_mgroup_t * m1, pddl_lifted_mgroup_t *m2, std::vector<int> & m1VarTom2Var, std::vector<bool> & m2VarAssigned, pddl_t * pddl, int pos = 0){
+
+	if (pos == m1VarTom2Var.size()){
+		DEBUG(std::cout << "Assignment:";
+		for (size_t m1V = 0; m1V < m1VarTom2Var.size(); m1V++)
+			std::cout << " " << m1V << " -> " << m1VarTom2Var[m1V];
+		std::cout << std::endl;);
 
 
+		// we have to search for every condition in m1 a mirror partner in m2
+		for (size_t m1i = 0; m1i < m1->cond.size; m1i++){
+			bool matchFound = false;
+			for (size_t m2i = 0; !matchFound && m2i < m2->cond.size; m2i++){
+				// get both atoms
+                const pddl_fm_atom_t *a1 = pddlFmToAtomConst(m1->cond.fm[m1i]);
+                const pddl_fm_atom_t *a2 = pddlFmToAtomConst(m2->cond.fm[m2i]);
 
-vector<unordered_set<int>> reinferTypeHierarchy(const Task & task){
-    cout << "- re-inferring type hierarchy..." << endl;
-    int numTypes = task.type_names.size();
-	std::unordered_set<int>* types = new unordered_set<int>[numTypes];
-    for (tSize obj = 0; obj < task.objects.size(); obj++) {
-        auto oTypes = task.objects[obj].getTypes();
-        for (tSize i = 0; i < oTypes.size(); i++) {
-            int j = oTypes[i];
-            types[j].insert(obj);
-        }
-    }
-    vector<unordered_set<int>> parents(numTypes); // todo: equal sets
-    for (int child = 0; child < numTypes; child++) {
-		if (types[child].size() == 0) continue;
+				// must have the same predicate
+				if (a1->pred != a2->pred) continue;
 
-        for (int parent = 0; parent < numTypes; parent++) {
-            if (child == parent) continue;
-            if (types[child].size() <= types[parent].size()) {
-                bool isSubset = true;
-                for (int elem: types[child]) {
-                    if (types[parent].find(elem) == types[parent].end()) {
-                        isSubset = false;
-                        break;
-                    }
-                }
-                if (isSubset) {
-                    parents[child].insert(parent);
-                }
-            }
-        }
-    }
-	delete[] types;
-	return parents;
-}
+				bool paramsMatch = true;
+				// iterate through the parameters
+				for (size_t param = 0; paramsMatch && param < a1->arg_size; param++){
+					// get both parameters
+					pddl_fm_atom_arg_t *p1 = a1->arg + param;
+					pddl_fm_atom_arg_t *p2 = a2->arg + param;
 
+					// cases
+					if (p1->param < 0){
+						// parameter p1 of a1 is a constant
+						if (p2->param < 0) {
+							// p2 is also a constant
+							if (p1->obj != p2->obj){
+								paramsMatch = false;
+								break;
+							} // else ok
+						} else {
+							// p2 is a variable
+							const pddl_param_t *v2 = m2->param.param + p2->param;
+							//pddl_type_t * t2 = pddl->type.type[v2->type];
+							if (!pddlTypesObjHasType(&(pddl->type), v2->type,
+										p1->obj)){
+								paramsMatch = false;
+								break;
+							} // else object is in type, so ok
+						}
+					} else {
+						// super mutex cannot have a constant here
+						if (p2->param < 0){
+							paramsMatch = false;
+							break;
+						}
+						
+						// test whether the variable of m1 is mapped to the one of m2
+						if (m1VarTom2Var[p1->param] != p2->param){
+							paramsMatch = false;
+							break;
+						}
 
-vector<int> computedirectParents(vector<unordered_set<int>> parents, const Task & task){
-    // make directional if there are multiple identical types
-    int numTypes = parents.size();
-	for (int i = 0; i < numTypes; i++) {
-        for (int j = 0; j < numTypes; j++) {
-            if (i == j) continue;
-                if ((parents[i].find(j) != parents[i].end())
-                    && (parents[j].find(i) != parents[j].end())) {
-                    parents[i].erase(parents[i].find(j));
-                }
+						// mapped to the same variable so ok.
+					}
+				}
+				if (paramsMatch) {
+					matchFound = true;
+					DEBUG(std::cout << "Match for " << m1i << " is " << m2i << std::endl);
+				}
+			}
+
+			if (! matchFound) {
+				DEBUG(std::cout << "Conjunct " << m1i << " has no match " << std::endl);
+				return false;
+			}
+		
 		}
+	
+		// here we have found a match for every condition	
+		DEBUG(std::cout << "Given m1 is a sub-mutex of m2." << std::endl);
+		return true;
 	}
-    
-    // make sparse
-	for (int j = 0; j < numTypes; j++) {
-        for (int i = 0; i < numTypes; i++) {
-            if (i == j) continue;
-            for (int k = 0; k < numTypes; k++) {
-                if ((i == k) || (j == k)) continue;
-				//j is parent of i
-				//k is parent of j
-				//k is parent of i
-				//then erase: k is parent of i
-                if ((parents[i].find(j) != parents[i].end())
-                    && (parents[j].find(k) != parents[j].end())
-                    && (parents[i].find(k) != parents[i].end())) {
-                    parents[i].erase(parents[i].find(k));
-                }
-            }
-        }
-    }
 
-	vector<int> directparents(parents.size());
+	// iterate through all possible remaining variables
+	for (size_t m2Var = 0; m2Var < m2VarAssigned.size(); m2Var++){
+		if (m2VarAssigned[m2Var]) continue;
+						
+		const pddl_param_t *v1 = m1->param.param + pos;
+		const pddl_param_t *v2 = m2->param.param + m2Var;
 
-	for(unsigned int type = 0; type < parents.size(); type++)
-		if (parents[type].size() == 0){
-			directparents[type] = -1;
-		} else if (parents[type].size() == 1){
-			directparents[type] = *(parents[type].begin());
-		} else {
-			cout << "Type " << type << " has multiple direct parents ... this is impossbile." << endl;
-   			exit_with(utils::ExitCode::SEARCH_UNSUPPORTED);
-		}
+		// we cannot map a counted var to an uncounted one ...
+		if (v1->is_counted_var && !v2->is_counted_var)
+			continue;
 
-	return directparents;
+		// situation is either (C,C), (V,V) or (V,C)
+		// in any case now m2 is at least as strong if the types are subtypes of each other (i.e. v1->type \subseteq v2->type)
+		if (v1->type != v2->type)
+			if (!pddlTypesIsParent(&(pddl->type),v1->type,v2->type))
+				continue;
+
+
+		// try is
+		m1VarTom2Var[pos] = m2Var;
+		m2VarAssigned[m2Var] = true;
+		if (is_mutex_group_contained_in_assignement(m1,m2,m1VarTom2Var,m2VarAssigned,pddl,pos+1))
+			return true;
+		m2VarAssigned[m2Var] = false;
+	}
+
+
+	return false;
 }
 
 
 
-PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task) {
+// tests whether the mgroup m1 is fully contained in m2
+bool is_mutex_group_contained_in(pddl_lifted_mgroup_t * m1, pddl_lifted_mgroup_t *m2, pddl_t * pddl){
+	// if m1 has *more* parameters it cannot be a subset of m2
+	if (m1->param.param_size > m2->param.param_size)
+		return false;
+
+	std::vector<int>  m1VarTom2Var  (m1->param.param_size);
+	std::vector<bool> m2VarAssigned (m2->param.param_size);
+
+	return is_mutex_group_contained_in_assignement(m1,m2,m1VarTom2Var,m2VarAssigned,pddl);
+} 
+
+
+
+
+
+
+
+PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task) :
+    BaseSATEncoding(task){
+    cout << "Entering PG SAT" << endl;
 	int numActions = task.actions.size();
-    int numObjs = task.objects.size();
 #ifdef CMAKE_NO_CPDDL 
 	cout << "Compiled without CPDDL support" << endl;
    	exit_with(utils::ExitCode::SEARCH_UNSUPPORTED);
@@ -143,27 +196,10 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task) {
     pddl->require.typing = 1;
     pddl->require.equality = 1;
 
-	vector<unordered_set<int>> parents = reinferTypeHierarchy(task);
-	vector<int> directparents = computedirectParents(parents,task);
-
-    int numTypes = task.type_names.size();
-    for (int i = 0; i < numTypes; i++) {
-        cout << task.type_names[i] << " -> {";
-        bool first = true;
-        for (auto p : parents[i]) {
-            if (first) {
-                first = false;
-            } else {
-                cout << ", ";
-            }
-            cout << task.type_names[p];
-        }
-        cout << "}" << " direct parent: " << (directparents[i] == -1?"none":task.type_names[directparents[i]]) << endl;
-    }
-
+	
 	// adding all the types to CPDDL
 	pddlTypesAdd(&pddl->type,root_type_cppdl,-1);
-    for (int i = 0; i < numTypes; i++) {
+    for (int i = 0; i < task.type_names.size(); i++) {
 		pddlTypesAdd(&pddl->type,task.type_names[i].c_str(),directparents[i]+1);
 
 	}
@@ -172,17 +208,7 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task) {
 	bzero(&pddl->obj, sizeof(pddl->obj));
 	pddl->obj.htable = pddlHTableNew(objHash, objEq, NULL);
 
-	// looping over all objects
-	std::unordered_set<int>* types = new unordered_set<int>[numTypes];
-    for (tSize obj = 0; obj < task.objects.size(); obj++) {
-        auto oTypes = task.objects[obj].getTypes();
-        for (tSize i = 0; i < oTypes.size(); i++) {
-            int j = oTypes[i];
-            types[j].insert(obj);
-        }
-    }
-
-
+    vector<int> type_of_object;
 	for (tSize obj = 0; obj < task.objects.size(); obj++) {
         auto oTypes = task.objects[obj].getTypes();
 		int actType = -1;
@@ -197,20 +223,540 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task) {
 
 		pddl_obj_t *objP = pddlObjsAdd(&pddl->obj, task.objects[obj].getName().c_str());
 		objP->type = actType + 1;
+        type_of_object.push_back(actType);
 		objP->is_constant = false;
 	}
 
+    pddlPredsInitEq(&pddl->pred);
+
+    std::vector<int> powerLiftedPredicatesToCPDDLPredicates (task.predicates.size());
+    for (tSize pred = 0; pred < task.predicates.size(); pred++) {
+        cout << task.predicates[pred].getName() << endl;
+        if (task.predicates[pred].getName() == "=") {
+            powerLiftedPredicatesToCPDDLPredicates[pred] = 0;
+            continue;
+        }
+        powerLiftedPredicatesToCPDDLPredicates[pred] = pddl->pred.pred_size;
+
+        pddl_pred_t *predP = pddlPredsAdd(&pddl->pred);
+        predP->name = STRDUP(task.predicates[pred].getName().c_str());
+        pddlPredAllocParams(predP, task.predicates[pred].getArity());
+        std::vector<int> predTypes = task.predicates[pred].getTypes();
+        for(int i = 0 ; i < predP->param_size ; i++){
+            pddlPredSetParamType(predP, i, predTypes[i]+1);
+        }
+    }
 
 
 
+
+	DEBUG(
+    cout << endl << "Initial state (static):" << endl;
+    for (tSize i = 0; i < task.get_static_info().get_relations().size(); i++) {
+        auto rel = task.get_static_info().get_relations()[i];
+        auto tuple = task.get_static_info().get_tuples_of_relation(i);
+        for (vector<int> groundA: tuple) {
+            cout << "(" << task.predicates[task.get_static_info().get_relations()[i].predicate_symbol].getName();
+            for (int obj: groundA) {
+                cout << " " << task.objects[obj].getName();
+            }
+            cout << ")" << endl;
+        }
+    }
+
+    cout << endl << "Initial state (non-static):" << endl;
+    for (tSize i = 0; i < task.initial_state.get_relations().size(); i++) {
+        auto rel = task.initial_state.get_relations()[i];
+        auto tuple = task.initial_state.get_tuples_of_relation(i);
+        for (vector<int> groundA: tuple) {
+            cout << "(" << task.predicates[task.initial_state.get_relations()[i].predicate_symbol].getName();
+            for (int obj: groundA) {
+                cout << " " << task.objects[obj].getName();
+            }
+            cout << ")" << endl;
+        }
+    }
+	);
+
+    
+
+    // for (size_t goal = 0; goal < task.goal.goal.size(); goal++){
+	// 		const AtomicGoal & goalAtom = task.goal.goal[goal];
+    // }
+    
+
+
+
+
+    pddl->init = pddlFmToAnd(pddlFmNewEmptyAnd());
+    for (tSize i = 0; i < task.get_static_info().get_relations().size(); i++) {
+        auto rel = task.get_static_info().get_relations()[i];
+        auto tuple = task.get_static_info().get_tuples_of_relation(i);
+        for (vector<int> groundA: tuple) {
+            pddl_fm_atom_t *a = pddlFmNewEmptyAtom(groundA.size());
+            a->pred = powerLiftedPredicatesToCPDDLPredicates[task.get_static_info().get_relations()[i].predicate_symbol];
+            for (tSize ai = 0; ai < groundA.size(); ++ai) {
+                 a->arg[ai].obj = groundA[ai];
+            }
+            pddlFmJuncAdd(pddl->init, &(a->fm));
+        }
+    }
+    
+
+    for (tSize i = 0; i < task.initial_state.get_relations().size(); i++) {
+        auto rel = task.initial_state.get_relations()[i];
+        auto tuple = task.initial_state.get_tuples_of_relation(i);
+        for (vector<int> groundA: tuple) {
+            pddl_fm_atom_t *a = pddlFmNewEmptyAtom(groundA.size());
+            a->pred = powerLiftedPredicatesToCPDDLPredicates[task.initial_state.get_relations()[i].predicate_symbol];
+            for (tSize ai = 0; ai < groundA.size(); ++ai) {
+                 a->arg[ai].obj = groundA[ai];
+            }
+            pddlFmJuncAdd(pddl->init, &(a->fm));
+        }
+    }
+
+
+
+    pddl->goal = pddlFmNewEmptyAnd();
+    for (size_t goal = 0; goal < task.goal.goal.size(); goal++){
+			const AtomicGoal & goalAtom = task.goal.goal[goal];
+            pddl_fm_atom_t *a = pddlFmNewEmptyAtom(goalAtom.args.size());
+            a->pred = powerLiftedPredicatesToCPDDLPredicates[task.goal.goal[goal].predicate];
+            for(tSize ai = 0 ; ai < goalAtom.args.size() ; ai++){
+                a->arg[ai].obj = goalAtom.args[ai];
+            }
+            pddlFmJuncAdd(pddlFmToAnd(pddl->goal), &(a->fm));
+    }
+
+
+
+    for (size_t aid = 0; aid < task.actions.size() ; aid++){
+        pddl_action_t *a;
+    	a = pddlActionsAddEmpty(&pddl->action);
+        a->name = strdup(task.actions[aid].get_name().c_str());
+
+        for (size_t varid = 0; varid < task.actions[aid].get_parameters().size() ; varid++){
+            pddl_param_t * p = pddlParamsAdd(&(a->param));
+            std::string paramName = "?var" + std::to_string(varid);
+            p->name = STRDUP(paramName.c_str());
+            p->type = task.actions[aid].get_parameters()[varid].type+1;
+            p->is_agent = 0;
+        }
+
+        if (task.actions[aid].get_precondition().size() /* + t.variableConstraints.size() */ == 0){
+			a->pre = pddlFmNewEmptyAnd();
+		} else {
+            a->pre = pddlFmNewEmptyAnd();
+            for(size_t precid = 0 ; precid < task.actions[aid].get_precondition().size() ; precid++){
+                pddl_fm_atom_t *atom = pddlFmNewEmptyAtom(task.actions[aid].get_precondition()[precid].arguments.size());
+                atom->pred = powerLiftedPredicatesToCPDDLPredicates[task.actions[aid].get_precondition()[precid].predicate_symbol];
+                for(tSize ai = 0 ; ai < task.actions[aid].get_precondition()[precid].arguments.size() ; ai++){
+                    atom->arg[ai].param = task.actions[aid].get_precondition()[precid].arguments[ai].index;
+                }
+                pddlFmJuncAdd(pddlFmToAnd(a->pre), &(atom->fm));
+            }
+        }
+
+        a->eff = pddlFmNewEmptyAnd();
+        for(size_t effid = 0 ; effid < task.actions[aid].get_effects().size() ; effid++){
+            pddl_fm_atom_t *atom = pddlFmNewEmptyAtom(task.actions[aid].get_effects()[effid].arguments.size());
+            atom->pred = powerLiftedPredicatesToCPDDLPredicates[task.actions[aid].get_effects()[effid].predicate_symbol];
+            for(tSize ai = 0 ; ai < task.actions[aid].get_effects()[effid].arguments.size() ; ai++){
+                atom->arg[ai].param = task.actions[aid].get_effects()[effid].arguments[ai].index;
+            }
+            atom->neg = task.actions[aid].get_effects()[effid].negated;
+            pddlFmJuncAdd(pddlFmToAnd(a->eff), &(atom->fm));
+        }
+
+    }
+
+    
+
+    pddlObjsPropagateToTypes(&pddl->obj, &pddl->type);
+    pddlResetPredInInit(pddl);
+    pddlResetPredReadWrite(pddl);
+	// Normalize pddl, i.e. remove stuff and so on
+	pddlNormalize(pddl, NULL);
+    /* for(int i = 0 ; i < pddl->pred.pred_size ; i++){
+        pddl->pred.pred[i].write = pddl_true;
+    } */
+
+
+    pddl_lifted_mgroups_infer_limits_t limits = PDDL_LIFTED_MGROUPS_INFER_LIMITS_INIT;
+	limits.max_candidates = 10000;
+	limits.max_mgroups = 10000;
+	pddl_lifted_mgroups_t lifted_mgroups;
+	pddlLiftedMGroupsInit(&lifted_mgroups);
+	pddl_err_t err = PDDL_ERR_INIT;
+    err.log_out = stdout;
+	//if (!config.quietMode)
+		std::cout << "Computing Lifted FAM-Groups [Fiser, AAAI 2020]" << std::endl;
+	pddlLiftedMGroupsInferFAMGroups(pddl, &limits, &lifted_mgroups, &err);
+    
+
+	//if (!config.quietMode)
+		std::cout << "Found " << lifted_mgroups.mgroup_size << " Lifted FAM-Groups" << std::endl;
+
+	/*DEBUG(*/for (int li = 0; li < lifted_mgroups.mgroup_size; ++li){
+        fprintf(stdout, "M:%d: ", li);
+        pddlLiftedMGroupPrint(pddl, lifted_mgroups.mgroup + li, stdout);}//);
 
 	//for (size_t o = 0; o < domain.constants.size(); o++)
 	//	cpddl_add_object_of_sort(pddl,domain.constants[o], ourTypeIDToCPDDL[objectType[o]]);
 
 
+ 	// pddl_lifted_mgroups_t ; pddl_t*, map<int,int>
+	std::vector<bool> pruned (lifted_mgroups.mgroup_size);
+    vector<int> FAM_group_indexes;
+	for (int i = 0; i < lifted_mgroups.mgroup_size; ++i)
+		for (int j = 0; j < lifted_mgroups.mgroup_size; ++j)
+			if (i != j && !pruned[i] && !pruned[j]){
+				DEBUG(std::cout << "Testing whether M" << i << " < M" << j << std::endl);
+
+				if (is_mutex_group_contained_in(lifted_mgroups.mgroup + i, lifted_mgroups.mgroup + j, pddl)){
+					DEBUG(std::cout << "Yes. So we prune m1." << std::endl);
+					pruned[i] = true;
+				}
+			}
+
+
+
+		std::cout << std::endl << std::endl << "FAM-Mutexes after reduction" << std::endl;
+		for (int li = 0; li < lifted_mgroups.mgroup_size; ++li){
+		    if (pruned[li]) continue;
+            FAM_group_indexes.push_back(li);
+            fprintf(stdout, "M:%d: ", li);
+            pddlLiftedMGroupPrint(pddl, lifted_mgroups.mgroup + li, stdout);
+        }
+    
+
+    int total_num_mutexes = 0;
+    vector<vector<string>> mutex_predicates(lifted_mgroups.mgroup_size);
+    for (int i = 0; i < lifted_mgroups.mgroup_size; i++){
+        if (pruned[i]) continue;
+        total_num_mutexes++;
+        for (int j = 0; j < (lifted_mgroups.mgroup + i)->cond.size; j++){
+            const pddl_fm_atom_t *atom = pddlFmToAtomConst((lifted_mgroups.mgroup + i)->cond.fm[j]);
+            mutex_predicates[i].push_back(pddl->pred.pred[atom->pred].name);
+            //cout << pddl->pred.pred[atom->pred].name << endl;
+        }
+    }
+
+    
+
+
+    vector<set<pair<int, int>>> mutex_fixed_variable;
+    vector<map<string, set<pair<int, int>>>> mutex_counted_variable;
+    for (int i = 0; i < lifted_mgroups.mgroup_size; i++){
+        if (pruned[i]) continue;
+        set<pair<int, int>> mutex_fixed_variable_aux;
+        map<string, set<pair<int, int>>> mutex_counted_variable_aux;
+        for (int j = 0; j < (lifted_mgroups.mgroup + i)->cond.size; j++){
+            const pddl_fm_atom_t *atom = pddlFmToAtomConst((lifted_mgroups.mgroup + i)->cond.fm[j]);
+            mutex_counted_variable_aux[pddl->pred.pred[atom->pred].name].size();
+            for (int k = 0; k < atom->arg_size; k++){
+                if (atom->arg[k].param >= 0){
+                    int param_id = atom->arg[k].param;
+                    const pddl_param_t *p = (lifted_mgroups.mgroup + i)->param.param + param_id;
+                    if (p->is_counted_var){
+                        mutex_counted_variable_aux[pddl->pred.pred[atom->pred].name].insert({param_id , p->type-1});
+                    }else{
+                        mutex_fixed_variable_aux.insert({param_id, p->type-1});
+                    }
+                }
+            }
+        }
+        mutex_fixed_variable.push_back(mutex_fixed_variable_aux);
+        mutex_counted_variable.push_back(mutex_counted_variable_aux);
+    }
+
+
+    //vector<pair<int, int>> FAM_size(mutex_fixed_variable.size());
+    int total_groups = 0;
+    for(int i = 0 ; i < mutex_counted_variable.size() ; i++){
+        int num_groups = 1;
+        for(const auto & parampair : mutex_fixed_variable[i]){
+            num_groups *= types[parampair.second].size();
+        } 
+
+        int size_groups = 0;
+        for(const auto & predicate : mutex_counted_variable[i]){
+            int size_predicate = 1;
+                for(const auto & parampair : predicate.second){
+                    size_predicate *= types[parampair.second].size();
+              }
+            size_groups += size_predicate;
+        }
+        total_groups += num_groups;
+        cout << num_groups << " " << size_groups << endl;
+    }
+
+    cout << "Total num mutexes : " << total_groups << endl;
+
+    vector<pair<int, vector<int>>> fam_based_mutexes;
+    for(int fam = 0 ; fam < mutex_fixed_variable.size() ; fam++){
+        if(mutex_fixed_variable[fam].size() >= 2){
+            auto it = mutex_fixed_variable[fam].begin();
+            pair<int, int> p1 = *it;
+            it++;
+            pair<int, int> p2 = *it;
+            vector<vector<int>> combinations;
+            for(int i = 0 ; i < types[p1.second].size() ; i++){
+                for(int j = 0 ; j < types[p2.second].size() ; j++){
+                    combinations.push_back({lowerTypeindex[p1.second] + i,lowerTypeindex[p2.second] + j});
+                }
+            }
+            it++;
+            vector<vector<int>> new_combination;
+            vector<int> aux;
+            while(it != mutex_fixed_variable[fam].end()){
+                pair<int, int> pn = *it;
+                for(int i = 0 ; i < combinations.size() ; i++){
+                    for(int j = 0 ; j < types[pn.second].size() ; j++){
+                        aux = combinations[i];
+                        aux.push_back(lowerTypeindex[pn.second] + j);
+                        new_combination.push_back(aux);
+                    }
+                }
+                swap(combinations,new_combination);
+                new_combination.clear();
+                it++;
+            }
+            for(int i = 0 ; i < combinations.size() ; i++){
+                fam_based_mutexes.push_back({fam, combinations[i]});
+            }
+        }else if(mutex_fixed_variable[fam].size() == 1){
+            pair<int, int> free_var = *(mutex_fixed_variable[fam].begin());
+            for(int i = 0 ; i < types[free_var.second].size() ; i++){
+                fam_based_mutexes.push_back({fam, {lowerTypeindex[free_var.second] + i}});
+            }
+        }else if(mutex_fixed_variable[fam].size() == 0){
+            fam_based_mutexes.push_back({fam, {}});
+        }
+    }
+
+    cout << fam_based_mutexes.size() << endl;
+
+    DEBUG(for(size_t i = 0 ; i < fam_based_mutexes.size() ; i++){
+        cout << i << " FAM Group : " << fam_based_mutexes[i].first << ", Variables :";
+        for(size_t j = 0 ; j < fam_based_mutexes[i].second.size() ; j++){
+            cout << " " << fam_based_mutexes[i].second[j] << "(" <<
+                task.objects[satObjectToPWLObject[fam_based_mutexes[i].second[j]]].getName() << ")";
+        }
+        cout << endl;
+    });
+
+
+    //vector<pair<int, vector<int>>> all_facts;
+    for(size_t predicates = 0 ;  predicates < task.predicates.size() ; predicates++){
+        if (task.predicates[predicates].getName().rfind("type@", 0) == 0) continue;
+		if (task.predicates[predicates].getName().rfind("=", 0) == 0) continue;
+        if (task.predicates[predicates].isStaticPredicate()) continue;
+        cout << predicates << " : " << task.predicates[predicates].getName() << endl;
+        vector<int> predicate_arguments = task.predicates[predicates].getTypes();
+        if(task.predicates[predicates].getArity() >= 2){
+            vector<vector<int>> combinations;
+            for(int i = 0 ; i < types[predicate_arguments[0]].size() ; i++){
+                for(int j = 0 ; j < types[predicate_arguments[1]].size() ; j++){
+                    combinations.push_back({lowerTypeindex[predicate_arguments[0]] + i,lowerTypeindex[predicate_arguments[1]] + j});
+                }
+            }
+            vector<vector<int>> new_combination;
+            vector<int> aux;
+            for(int arity = 2 ; arity < task.predicates[predicates].getArity() ; arity++){
+                for(size_t i = 0 ; i < combinations.size() ; i++){
+                    for(size_t j = 0 ; j < types[predicate_arguments[arity]].size() ; j++){
+                        aux = combinations[i];
+                        aux.push_back(lowerTypeindex[predicate_arguments[arity]] + j);
+                        new_combination.push_back(aux);
+                    }
+                }
+                swap(combinations,new_combination);
+                new_combination.clear();
+            }
+            for(int i = 0 ; i < combinations.size() ; i++){
+                all_facts.push_back({predicates, combinations[i]});
+            }
+        }else if(task.predicates[predicates].getArity() == 1){
+            for(int i = 0 ; i < types[predicate_arguments[0]].size() ; i++){
+                all_facts.push_back({predicates, {lowerTypeindex[predicate_arguments[0]] + i}});
+            }
+        }else if(task.predicates[predicates].getArity() == 0){
+            all_facts.push_back({predicates, {}});
+        }
+    }
+
+    DEBUG(for(size_t i = 0 ; i < all_facts.size() ; i++){
+        cout << "Predicate : " << all_facts[i].first << "; Objects :";
+        for(size_t j = 0 ; j < all_facts[i].second.size() ; j++){
+            cout << " " << all_facts[i].second[j];
+        }
+        cout << endl;
+    });
+
+
+    map<int, vector<int>> fact_to_mutexes;
+    for(size_t facts = 0 ; facts < all_facts.size() ; facts++){
+        vector<int> mutexes_with_fact;
+        pair<int, vector<int>> fact = all_facts[facts];
+
+        //cout << endl << endl << endl << "||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||" << endl;
+        //cout << "Predicate : " << fact.first << "; Objects :";
+        //for(size_t j = 0 ; j < fact.second.size() ; j++){
+        //    cout << " " << fact.second[j] << " " << task.objects[satObjectToPWLObject[fact.second[j]]].getName();
+        //}
+        //cout << endl;
+
+        //cout << endl << endl << fact.first << " " << task.predicates[fact.first].getName() << endl;
+        for(size_t mutexes = 0 ; mutexes < fam_based_mutexes.size() ; mutexes++){
+            pair<int, vector<int>> mutex = fam_based_mutexes[mutexes];
+            //pddl_lifted_mgroup_t FAM_group = lifted_mgroups.mgroup[FAM_group_indexes[mutex.first]];
+            for (int j = 0; j < (lifted_mgroups.mgroup + FAM_group_indexes[mutex.first])->cond.size; j++){
+                const pddl_fm_atom_t *atom = pddlFmToAtomConst((lifted_mgroups.mgroup + FAM_group_indexes[mutex.first])->cond.fm[j]);
+                if(pddl->pred.pred[atom->pred].id == powerLiftedPredicatesToCPDDLPredicates[fact.first]){
+                    //cout << "entered the if checking if predicates are the same\n";
+                    bool add = true;
+                    //cout << "=============================================" << endl;
+                    //cout << "Arg size " << atom->arg_size <<  " fam group " << FAM_group_indexes[mutex.first] << endl;
+                    for (int k = 0; k < atom->arg_size; k++){
+                        if (atom->arg[k].param >= 0){
+                            int param_id = atom->arg[k].param;
+                            const pddl_param_t *p = (lifted_mgroups.mgroup + FAM_group_indexes[mutex.first])->param.param + param_id;
+                            //cout << "p->is_counted_var : " << p->is_counted_var << "; fact.second[k] : " << fact.second[k] << "; mutex.second[param_id] : " << mutex.second[param_id] << "; param_id : " << param_id << endl;
+                            //cout << "p->is_counted_var : " << p->is_counted_var << "; type_of_object[fact.second[k]] : " << type_of_object[satObjectToPWLObject[fact.second[k]]] << "; p->type-1 : " << p->type-1 << endl;
+                            if (!p->is_counted_var && fact.second[k] != mutex.second[param_id]){
+                                add = false;
+                                break;
+                            }else if (p->is_counted_var && (fact.second[k] < lowerTypeindex[p->type-1] || fact.second[k] > upperTypeindex[p->type-1])){
+                                add = false;
+                                break;
+                            }
+                        }else if (atom->arg[k].param < 0 && atom->arg[k].obj != satObjectToPWLObject[fact.second[k]]){
+                            //cout << "Arg pos " << k << " " << atom->arg[k].param << " " << task.objects[atom->arg[k].obj].getName() << " " 
+                            //    <<  task.objects[satObjectToPWLObject[fact.second[k]]].getName() <<  " add " << add << endl;
+                            add = false;
+                            break;
+                        }
+                    }
+                    //cout << add << endl;
+                    if (add){
+                        mutexes_with_fact.push_back(mutexes);
+                    }
+                }
+            }
+        }
+
+        //fact_to_mutexes[facts].size();
+        fact_to_mutexes[facts] = mutexes_with_fact;
+        mutexes_with_fact.clear();
+    }
+
+    DEBUG(for(size_t facts = 0 ; facts < all_facts.size() ; facts++){
+        cout << "Fact " << facts << " :";
+        for(size_t i = 0 ; i < fact_to_mutexes[facts].size() ; i++){
+            cout << " " << fact_to_mutexes[facts][i];
+        }
+        cout << endl;
+    });
+
+    map<int, vector<int>> mutex_to_facts;
+    for(size_t i = 0 ; i < fact_to_mutexes.size() ; i++){
+        for(size_t j = 0 ; j < fact_to_mutexes[i].size() ; j++){
+            mutex_to_facts[fact_to_mutexes[i][j]].push_back(i);
+        }
+    }
+
+    cout << "mutex_to_facts.size() : " << mutex_to_facts.size() << endl;
+
+    for(size_t i = 0 ;  i < total_groups ; i++){
+        if(!mutex_to_facts.count(i)){
+            cout << "FAM based mutex number : " << FAM_group_indexes[fam_based_mutexes[i].first] << " ; " << i << endl;
+        }  
+    }
+    
+    vector<bool> decreased_fact(fact_to_mutexes.size(), false);
+    vector<int> num_facts_in_mutex(total_groups, 0);
+    map<int,set<int>> sizeToMutexes;
+    vector<int> selected_mutexes;
+    for(size_t i = 0 ; i < total_groups ; i++){
+        num_facts_in_mutex[i] = mutex_to_facts[i].size();
+        sizeToMutexes[mutex_to_facts[i].size()].insert(i);
+    }
+    
+    
+    while( sizeToMutexes.rbegin()->first /*!= 0*/){
+
+        if (sizeToMutexes.rbegin()->second.size() == 0){
+            sizeToMutexes.erase(sizeToMutexes.rbegin()->first);
+            continue;
+        }
+
+        int largestMutexGroup = *(sizeToMutexes.rbegin()->second.begin());
+
+        selected_mutexes.push_back(largestMutexGroup);
+        
+        for (int fact : mutex_to_facts[largestMutexGroup]){
+            if (!decreased_fact[fact]){
+                //cout << "Fact that is going to be decremented : " << fact << endl;
+                decreased_fact[fact] = true;
+                for (int mutex : fact_to_mutexes[fact]){
+                    //cout << "Mutexes that contain the fact and will have their size decreased in 1 : " << mutex << endl;
+                    int currentNum = num_facts_in_mutex[mutex];
+                    //cout << "num_facts_in_mutex.size() : " << num_facts_in_mutex.size() << endl;
+                    //cout << "Current size of said mutex : " << currentNum << endl;
+                    num_facts_in_mutex[mutex]--;
+
+                    /* cout << "Mutexes of same size :";
+                    for(int a : sizeToMutexes[currentNum]){
+                        cout << " " << a;
+                    }
+                    cout << "\nTrying to delete mutex : " << mutex << endl; */
+
+                    sizeToMutexes[currentNum].erase(mutex);
+                    sizeToMutexes[currentNum-1].insert(mutex);
+                }
+
+            }
+            
+        }
+
+    }
+
+    
+    cout << "Selected mutexes :";
+    for(size_t i = 0 ; i < selected_mutexes.size() ; i++){
+        cout << " " << selected_mutexes[i];
+    }
+    cout<< endl;
+
+    vector<int> uncovered_facts;
+    for(size_t i = 0 ; i < decreased_fact.size() ; i++){
+        if(!decreased_fact[i]){
+            uncovered_facts.push_back(i);
+        }
+    }
+
+
+    cout << "Uncovered facts (" << uncovered_facts.size() << " of " << all_facts.size() << "):" ;
+    for(size_t i = 0 ; i < uncovered_facts.size() ; i++){
+        cout << " " << uncovered_facts[i];
+
+        pair<int, vector<int>> fact = all_facts[uncovered_facts[i]];
+
+        cout << "Predicate : " << fact.first << "; Objects :";
+        for(size_t j = 0 ; j < fact.second.size() ; j++){
+            cout << " " << fact.second[j] << " " << task.objects[satObjectToPWLObject[fact.second[j]]].getName();
+        }
+        cout << endl;
+
+    }
+    cout<< endl;
+
+
 	cout << endl;
-    pddlPrintPDDLDomain(pddl,stdout);
-    pddlPrintPDDLProblem(pddl,stdout);
+    //pddlPrintPDDLDomain(pddl,stdout);
+    //pddlPrintPDDLProblem(pddl,stdout);
 
 
 	cout << " done" << endl;
@@ -218,7 +764,359 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task) {
 
 utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool optimal, bool incremental) {
 	cout << "Not yet implemented!" << endl;
+
+    int maxArity = 0;
+    int maxPrec = 0;
+    map<int,map<int,int>> actionArgumentPositions;
+    int numberOfArgumentPositions = 0;
+    map<int,int> firstArgumentOfType;
+    map<int,int> typeOfArgument;
+
+
+	map<int,int> maxNum;
+	map<int,int> objCount;
+
+    for (auto a: task.actions) {
+        maxArity = max(maxArity, (int) a.get_parameters().size());
+        maxPrec = max(maxPrec, (int) a.get_precondition().size());
+		
+		map<int,int> thisCount;
+		for (auto para : a.get_parameters())
+			thisCount[para.type] += 1;
+
+		for (auto p : thisCount)
+			if (maxNum[p.first] < p.second)
+				maxNum[p.first] = p.second;
+    }
+
+	for (auto p : maxNum){
+		firstArgumentOfType[p.first] = numberOfArgumentPositions;
+		for (int i = numberOfArgumentPositions; i < numberOfArgumentPositions + p.second; i++)
+			typeOfArgument[i] = p.first;
+		numberOfArgumentPositions += p.second;
+	}
+
+
+	for (auto a: task.actions) {
+		map<int,int> thisCount;
+		for (auto para : a.get_parameters()){
+			actionArgumentPositions[a.get_index()][para.index] = firstArgumentOfType[para.type] + thisCount[para.type];
+			thisCount[para.type] += 1;
+		}
+
+		
+		cout << "Action #" << a.get_index() << " "  << a.get_name() << ":";
+		for (auto [a,b] : actionArgumentPositions[a.get_index()])
+			cout << " " << a << "->" << b;
+		cout << endl;
+	}
+
+
+
+    int timesteps = 2;
+    PartiallyGroundedSAT pgs = PartiallyGroundedSAT(task);
+    void* solver = ipasir_init();
+	sat_capsule capsule;
+			
+
+	for (int timestep = 0; timestep < timesteps; timestep++){
+        std::vector<std::map<int,int>> parameterVarsTime(numberOfArgumentPositions);
+        for (int paramter = 0; paramter < numberOfArgumentPositions; paramter++){
+            int type = typeOfArgument[paramter];
+            int lower = lowerTypeindex[type];
+            int upper = upperTypeindex[type];
+            vector<int> temp;
+
+            for (int o = 0; o < upper - lower + 1; o++){
+                int objectVar = capsule.new_variable();
+                parameterVarsTime[paramter][lower + o] = objectVar;
+                temp.push_back(objectVar);
+                DEBUG(capsule.registerVariable(objectVar, "const@" + to_string(timestep) + "#" + to_string(paramter)
+                    + "-" + task.objects[satObjectToPWLObject[o + lower]].getName()));
+            }
+            // each parameter can have at most one value
+            atMostOne(solver,capsule,temp);
+        }
+        //parameterVars.push_back(parameterVarsTime);
+
+        std::vector<int> actionVarsTime;
+        for (size_t action = 0; action < task.actions.size(); action++){
+            DEBUG(cout << "\t" << task.actions[action].get_name() << endl);
+
+            int actionVar;
+            actionVar = capsule.new_variable();
+            actionVarsTime.push_back(actionVar);
+            DEBUG(capsule.registerVariable(actionVar,"action@" + to_string(timestep) + "-" + task.actions[action].get_name()));
+
+            // typing implications!
+            auto params = task.actions[action].get_parameters();
+            for (size_t l = 0; l < params.size(); l++) {
+                int thisParameterIndex = actionArgumentPositions[action][l];
+                DEBUG(cout << "\t\t" << task.type_names[params[l].type] << ": ");
+                //if (!needToType[{action,l}]){
+                //	DEBUG(cout << "no need to type " << endl);
+                //	continue;
+                //}
+                
+                int lower = lowerTypeindex[params[l].type];
+                int upper = upperTypeindex[params[l].type];
+                DEBUG(for (int m = lower; m <= upper; m++) {
+                    cout << task.objects[satObjectToPWLObject[m]].getName() << " ";
+                }
+                cout << endl);
+
+                //for (int i = 0; i < lower; i++){
+                //	int parameterConstantVar = parameterVars[time][l][i];
+                //	impliesNot(solver,actionVar,parameterConstantVar);
+                //}
+
+                //for (int i = upper + 1; i < int(task.objects.size()); i++){
+                //	int parameterConstantVar = parameterVars[time][l][i];
+                //	impliesNot(solver,actionVar,parameterConstantVar);
+                //}
+
+                std::vector<int> allowed;
+                for (int i = 0; i <= upper - lower; i++){
+                    int parameterConstantVar = parameterVarsTime[thisParameterIndex][lower + i];
+                    allowed.push_back(parameterConstantVar);
+                }
+                impliesOr(solver,actionVar,allowed);
+            }
+
+            int bef = 0;
+
+
+            /////// SPECIAL PRECONDITIONS
+            const auto precs = task.actions[action].get_precondition();
+	        for (size_t prec = 0; prec < precs.size(); prec++) {
+            	DEBUG(cout << "\t\tprecondition #" << prec << endl);
+            	
+				const auto & precObjec = precs[prec];
+				int predicate = precObjec.predicate_symbol;
+				if (task.predicates[predicate].getName().rfind("type@", 0) == 0) continue;
+			
+				//bef = get_number_of_clauses();
+			
+				if (task.predicates[predicate].getName().rfind("=", 0) == 0){
+                    int varA = precObjec.arguments[0].index;
+                    int varB = precObjec.arguments[1].index;
+
+                    if (precObjec.negated){
+                        // not equals
+                        if (precObjec.arguments[0].constant){
+                            int myObjIndex = objToIndex[varA];
+                            varB = actionArgumentPositions[action][varB];
+                            impliesNot(solver,actionVar, parameterVars[time][varB][myObjIndex - lowerTindex[typeOfArgument[varB]]]);
+                        } else if (precObjec.arguments[1].constant){
+                            int myObjIndex = objToIndex[varB];
+                            varA = actionArgumentPositions[action][varA];
+                            impliesNot(solver,actionVar, parameterVars[time][varA][myObjIndex - lowerTindex[typeOfArgument[varA]]]);
+                        } else {
+                            varA = actionArgumentPositions[action][varA];
+                            varB = actionArgumentPositions[action][varB];
+                            for(int o = max(lowerTindex[typeOfArgument[varA]],lowerTindex[typeOfArgument[varB]]);
+                                    o <= min(upperTindex[typeOfArgument[varA]],upperTindex[typeOfArgument[varB]]); o++){
+                                andImpliesNot(solver,actionVar,parameterVars[time][varA][o - lowerTindex[typeOfArgument[varA]]],
+                                        parameterVars[time][varB][o - lowerTindex[typeOfArgument[varB]]]);
+                            }
+                        }
+                    } else {
+                        // equals
+                        if (precObjec.arguments[0].constant){
+                            int myObjIndex = objToIndex[varA];
+                            varB = actionArgumentPositions[action][varB];
+                            implies(solver,actionVar, parameterVars[time][varB][myObjIndex - lowerTindex[typeOfArgument[varB]]]);
+                        } else if (precObjec.arguments[1].constant){
+                            int myObjIndex = objToIndex[varB];
+                            varA = actionArgumentPositions[action][varA];
+                            implies(solver,actionVar, parameterVars[time][varA][myObjIndex - lowerTindex[typeOfArgument[varA]]]);
+                        } else {
+                            varA = actionArgumentPositions[action][varA];
+                            varB = actionArgumentPositions[action][varB];
+                            for(int o = max(lowerTindex[typeOfArgument[varA]],lowerTindex[typeOfArgument[varB]]);
+                                    o <= min(upperTindex[typeOfArgument[varA]],upperTindex[typeOfArgument[varB]]); o++){
+                                andImplies(solver,actionVar,parameterVars[time][varA][o - lowerTindex[typeOfArgument[varA]]],
+                                        parameterVars[time][varB][o - lowerTindex[typeOfArgument[varB]]]);
+                                andImplies(solver,actionVar,parameterVars[time][varB][o - lowerTindex[typeOfArgument[varB]]],
+                                        parameterVars[time][varA][o - lowerTindex[typeOfArgument[varA]]]);
+                            }
+                        }
+                    }
+		
+					equalsPrecs += get_number_of_clauses() - bef;
+					bef = get_number_of_clauses();
+					continue;
+				}
+
+				// 1. Step: select the time step which supports
+				// precSupporter is a generic variable that just tells you from which timestep we take the support
+				//if (generateBaseFormula) impliesOr(solver,actionVar,precSupporter[time][prec]);
+			
+
+                if (task.predicates[predicate].isStaticPredicate()){
+                    //bef = get_number_of_clauses();
+                    if (supportingTuples[action][prec].size() == 0){
+                        DEBUG(cout << "\t\tno init support for precondition #" << prec << " with pred " << predicate << " " << task.predicates[predicate].getName() << endl);
+                        assertNot(solver,actionVar); // cannot be supported by init!
+                    } else {
+                        if (supportingTuples[action][prec].size() == 1){
+                            // if this action is chosen, exactly this tuple has to be used as the precondition
+                            vector<int> tuple = supportingTuples[action][prec][0].first;
+                            for (size_t j = 0; j < tuple.size(); j++){
+                                int myObjIndex = objToIndex[tuple[j]];
+                                if (precObjec.arguments[j].constant){
+                                    if (precObjec.arguments[j].index != tuple[j]){
+                                        if (task.predicates[predicate].isStaticPredicate())
+                                            assertNot(solver,actionVar);
+                                        else
+                                            impliesNot(solver,actionVar,precSupporter[time][prec][0]);
+                                    }
+                                } else {
+                                    int myParam = actionArgumentPositions[action][precObjec.arguments[j].index];
+                                    if (myObjIndex < lowerTindex[typeOfArgument[myParam]] || myObjIndex > upperTindex[typeOfArgument[myParam]]){
+                                        if (task.predicates[predicate].isStaticPredicate())
+                                            assertNot(solver,actionVar);
+                                        else
+                                            impliesNot(solver,actionVar,precSupporter[time][prec][0]);
+                                    } else {
+                                        if (task.predicates[predicate].isStaticPredicate())
+                                            implies(solver,actionVar, parameterVars[time][myParam][myObjIndex - lowerTindex[typeOfArgument[myParam]]]);
+                                        else
+                                            impliesAnd(solver,actionVar,precSupporter[time][prec][0], parameterVars[time][myParam][myObjIndex - lowerTindex[typeOfArgument[myParam]]]);
+                                    }
+                                }
+                            }
+                        } else {
+                            if (precObjec.arguments.size() == 1){
+                                vector<int> possibleValues;
+                                
+                                for (size_t i = 0; i < supportingTuples[action][prec].size(); i++){
+                                    vector<int> tuple = supportingTuples[action][prec][i].first;
+                                
+                                    int myObjIndex = objToIndex[tuple[0]];
+                                    int myParam = actionArgumentPositions[action][precObjec.arguments[0].index];
+                                    int constantVar = parameterVars[time][myParam][myObjIndex - lowerTindex[typeOfArgument[myParam]]];
+                                    
+                                    possibleValues.push_back(constantVar);
+                                }
+
+                                if (task.predicates[predicate].isStaticPredicate())
+                                    impliesOr(solver,actionVar,possibleValues);
+                                else
+                                    impliesOr(solver,actionVar,precSupporter[time][prec][0],possibleValues);
+                            } else {
+                                bool firstWithNonConst = true;
+                                for (size_t lastPos = 0; lastPos < precObjec.arguments.size() - 1 ; lastPos++){
+                                    // ignore all arguments until we find the first one with a non-constant
+                                    if (precObjec.arguments[lastPos].constant && firstWithNonConst) continue;
+
+                                    map<vector<int>,set<int>> possibleUpto;
+
+                                    // build assignment tuple up to this point
+                                    for (size_t i = 0; i < supportingTuples[action][prec].size(); i++){
+                                        vector<int> tuple = supportingTuples[action][prec][i].first;
+                                        vector<int> subTuple;
+                                        subTuple.push_back(actionVar);
+                                        if (!task.predicates[predicate].isStaticPredicate())
+                                            subTuple.push_back(precSupporter[time][prec][0]);
+                                    
+                                        for (size_t j = 0; j <= lastPos; j++){
+                                            // push only the non-constants
+                                            if (precObjec.arguments[j].constant) continue;
+                                            int myObjIndex = objToIndex[tuple[j]];
+                                            int myParam = actionArgumentPositions[action][precObjec.arguments[j].index];
+                                            int constantVar = parameterVars[time][myParam][myObjIndex - lowerTindex[typeOfArgument[myParam]]];
+                                            
+                                            subTuple.push_back(constantVar);
+                                        }
+                                        
+                                        if (precObjec.arguments[lastPos + 1].constant) {
+                                            possibleUpto[subTuple].insert(0);
+                                            continue;
+                                        }
+
+                                        int myObjIndex = objToIndex[tuple[lastPos + 1]];
+                                        int myParam = actionArgumentPositions[action][precObjec.arguments[lastPos + 1].index];
+                                        int localObjectNumber = myObjIndex - lowerTindex[typeOfArgument[myParam]];
+                                        //if (localObjectNumber >= parameterVars[time][myParam].size()) cout << "F " << localObjectNumber << " " << parameterVars[time][myParam].size() << endl;
+                                        int constantVar = parameterVars[time][myParam][localObjectNumber];
+
+
+                                        possibleUpto[subTuple].insert(constantVar);
+                                    }
+
+
+                                    if (!precObjec.arguments[lastPos + 1].constant)
+                                        for (auto & x : possibleUpto){
+                                            andImpliesOr(solver,x.first,x.second);
+                                            //for (int i : x.first) cout << " - " << capsule.variableNames[i];
+                                            //for (int i : x.second) cout << " " << capsule.variableNames[i];
+                                            //cout << endl;
+                                        }
+
+                                    if (firstWithNonConst){
+                                        vector<int> initial;
+                                        for (auto & x : possibleUpto)
+                                            initial.push_back(x.first[1]);
+
+                                        if (task.predicates[predicate].isStaticPredicate())
+                                            impliesOr(solver,actionVar,initial);
+                                        else
+                                            impliesOr(solver,actionVar,precSupporter[time][prec][0],initial);
+                                        //cout << "- " << capsule.variableNames[actionVar];
+                                        //for (int i : initial) cout << " " << capsule.variableNames[i];
+                                        //cout << endl;
+                                        firstWithNonConst = false;
+                                    }
+                                }
+                            }
+                        }
+                        //staticInitSupp += get_number_of_clauses() - bef;
+                        //bef = get_number_of_clauses();
+                    }
+                } 
+            }
+        }
+
+
+        vector<vector<int>> mutexPredicateVarsTime(pgs.all_facts.size());
+        for (size_t predicate = 0; predicate < pgs.all_facts.size(); predicate++){
+            int grounded_mutex_predicate_var;
+            grounded_mutex_predicate_var = capsule.new_variable();
+            mutexPredicateVarsTime[predicate].push_back(grounded_mutex_predicate_var);
+            string arguments = "(" + task.objects[satObjectToPWLObject[pgs.all_facts[predicate].second[0]]].getName();
+            for(size_t object = 1 ; object < pgs.all_facts[predicate].second.size() ; object++){
+                arguments += ", " + task.objects[satObjectToPWLObject[pgs.all_facts[predicate].second[object]]].getName();
+            }
+            arguments += ")";
+            DEBUG(capsule.registerVariable(grounded_mutex_predicate_var,"predicate@" + to_string(timestep) + "-" + task.predicates[all_facts[predicate].first].getName() + arguments) );
+        }
+
+        /* vector<vector<int>> staticPredicates;
+
+
+        for(size_t action = 0 ; action < task.actions.size() ; action++){
+            for(size_t pre_condition = 0 ; pre_condition < task.actions[action].precondition.size() ; pre_condition++){
+                
+            }
+        } */
+
+        atMostOne(solver,capsule,actionVarsTime);
+        atLeastOne(solver,capsule,actionVarsTime);
+
+    }
+
+    //assertNot(solver,23);
+    //assertNot(solver,22);
+
+
+    DEBUG(capsule.printVariables());
+
+    int state = ipasir_solve(solver);
+    if (state == 10){
+		DEBUG(capsule.printVariableTruth(solver));
+	}
+
+
 	return utils::ExitCode::SEARCH_UNSOLVED_INCOMPLETE;
 }
-
-
