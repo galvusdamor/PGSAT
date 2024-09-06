@@ -36,7 +36,7 @@ def parse_options():
                         default="sparse", choices=("sparse", "extensional"))
     parser.add_argument('--seed', action='store', help='Random seed.',
                         default=1)
-    parser.add_argument('-l', '--planLength', action='store', help='Plan length for the SAT encoding', default=10000)
+    parser.add_argument('-l', '--planLength', action='store', help='Plan length for the SAT encoding', default=-1)
     parser.add_argument('-w', '--width', action='store', help='Number of predicate slots', default=10000)
     parser.add_argument('-o', '--optimal', action="store_true", help="Run the SAT planner in optimal mode")
     parser.add_argument('-S', '--noStructure', action="store_true", help="disable structure inference for linear SAT planner")
@@ -162,7 +162,8 @@ def main():
                '--seed', str(options.seed)]
     else:
         # Invoke the C++ search component
-        cmd = [os.path.join(build_dir, 'search', 'search'),
+        cmd = [#'valgrind', 
+               os.path.join(build_dir, 'search', 'search'),
                '-f', options.translator_file,
                '-s', options.search,
                '-l', str(options.planLength),

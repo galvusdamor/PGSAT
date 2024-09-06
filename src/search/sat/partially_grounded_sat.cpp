@@ -25,6 +25,10 @@ static const char* root_type_cppdl = "__object_cpddl";
 
 using namespace std;
 
+#define timesplit(name) {clock_t _end=clock();timings[name]+=1000.0*(_end-_start)/CLOCKS_PER_SEC; _start=_end;}
+#define PRECPROCESSING "preprocessing"
+#define SATSOLVER "sat solver"
+
 struct obj_key {
     int obj_id;
     const char *name;
@@ -44,6 +48,19 @@ static int objEq(const pddl_list_t *key1, const pddl_list_t *key2, void *_)
     const obj_key_t *obj1 = pddl_container_of(key1, obj_key_t, htable);
     const obj_key_t *obj2 = pddl_container_of(key2, obj_key_t, htable);
     return strcmp(obj1->name, obj2->name) == 0;
+}
+
+int increase(vector<int> lower, vector<int> upper, vector<int> &current, int index){
+    if(index < 0){
+        return 0;
+    }
+    if(current[index]+1 <= upper[index]){
+        current[index] += 1;
+        return 1;
+    }else{
+        current[index] = lower[index];
+        return increase(lower, upper, current, index-1);
+    }
 }
 
 bool is_mutex_group_contained_in_assignement(pddl_lifted_mgroup_t * m1, pddl_lifted_mgroup_t *m2, std::vector<int> & m1VarTom2Var, std::vector<bool> & m2VarAssigned, pddl_t * pddl, int pos = 0){
@@ -178,6 +195,8 @@ bool is_mutex_group_contained_in(pddl_lifted_mgroup_t * m1, pddl_lifted_mgroup_t
 
 PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task) :
     BaseSATEncoding(task){
+    _start=clock();
+    
     cout << "Entering PG SAT" << endl;
 	int numActions = task.actions.size();
 #ifdef CMAKE_NO_CPDDL 
@@ -349,10 +368,18 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task) :
 		} else {
             a->pre = pddlFmNewEmptyAnd();
             for(size_t precid = 0 ; precid < task.actions[aid].get_precondition().size() ; precid++){
-                pddl_fm_atom_t *atom = pddlFmNewEmptyAtom(task.actions[aid].get_precondition()[precid].arguments.size());
+                size_t argSize = task.actions[aid].get_precondition()[precid].arguments.size();
+                pddl_fm_atom_t *atom = pddlFmNewEmptyAtom(argSize);
                 atom->pred = powerLiftedPredicatesToCPDDLPredicates[task.actions[aid].get_precondition()[precid].predicate_symbol];
-                for(tSize ai = 0 ; ai < task.actions[aid].get_precondition()[precid].arguments.size() ; ai++){
-                    atom->arg[ai].param = task.actions[aid].get_precondition()[precid].arguments[ai].index;
+                for(tSize ai = 0 ; ai < argSize ; ai++){
+                    if(task.actions[aid].get_precondition()[precid].arguments[ai].constant){
+                        atom->arg[ai].obj = task.actions[aid].get_precondition()[precid].arguments[ai].index;
+                        atom->arg[ai].param = -1;
+                    }else{
+                        atom->arg[ai].obj = -1;
+                        atom->arg[ai].param = task.actions[aid].get_precondition()[precid].arguments[ai].index;
+                    }
+
                 }
                 pddlFmJuncAdd(pddlFmToAnd(a->pre), &(atom->fm));
             }
@@ -360,10 +387,17 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task) :
 
         a->eff = pddlFmNewEmptyAnd();
         for(size_t effid = 0 ; effid < task.actions[aid].get_effects().size() ; effid++){
+            size_t argSize = task.actions[aid].get_effects()[effid].arguments.size();
             pddl_fm_atom_t *atom = pddlFmNewEmptyAtom(task.actions[aid].get_effects()[effid].arguments.size());
             atom->pred = powerLiftedPredicatesToCPDDLPredicates[task.actions[aid].get_effects()[effid].predicate_symbol];
             for(tSize ai = 0 ; ai < task.actions[aid].get_effects()[effid].arguments.size() ; ai++){
-                atom->arg[ai].param = task.actions[aid].get_effects()[effid].arguments[ai].index;
+                if(task.actions[aid].get_effects()[effid].arguments[ai].constant){
+                        atom->arg[ai].obj = task.actions[aid].get_effects()[effid].arguments[ai].index;
+                        atom->arg[ai].param = -1;
+                    }else{
+                        atom->arg[ai].obj = -1;
+                        atom->arg[ai].param = task.actions[aid].get_effects()[effid].arguments[ai].index;
+                    }
             }
             atom->neg = task.actions[aid].get_effects()[effid].negated;
             pddlFmJuncAdd(pddlFmToAnd(a->eff), &(atom->fm));
@@ -548,7 +582,7 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task) :
     });
 
 
-    //vector<pair<int, vector<int>>> all_facts;
+    /* map<pair<int, vector<int>>,int> all_facts_index; */
     for(size_t predicates = 0 ;  predicates < task.predicates.size() ; predicates++){
         if (task.predicates[predicates].getName().rfind("type@", 0) == 0) continue;
 		if (task.predicates[predicates].getName().rfind("=", 0) == 0) continue;
@@ -587,13 +621,17 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task) :
         }
     }
 
-    DEBUG(for(size_t i = 0 ; i < all_facts.size() ; i++){
+    for (size_t i =0 ; i < all_facts.size(); i++){
+        all_facts_index[all_facts[i]] = i;
+    }
+
+    /* DEBUG(for(size_t i = 0 ; i < all_facts.size() ; i++){
         cout << "Predicate : " << all_facts[i].first << "; Objects :";
         for(size_t j = 0 ; j < all_facts[i].second.size() ; j++){
             cout << " " << all_facts[i].second[j];
         }
         cout << endl;
-    });
+    }); */
 
 
     map<int, vector<int>> fact_to_mutexes;
@@ -652,13 +690,13 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task) :
         mutexes_with_fact.clear();
     }
 
-    DEBUG(for(size_t facts = 0 ; facts < all_facts.size() ; facts++){
+    /* DEBUG(for(size_t facts = 0 ; facts < all_facts.size() ; facts++){
         cout << "Fact " << facts << " :";
         for(size_t i = 0 ; i < fact_to_mutexes[facts].size() ; i++){
             cout << " " << fact_to_mutexes[facts][i];
         }
         cout << endl;
-    });
+    }); */
 
     map<int, vector<int>> mutex_to_facts;
     for(size_t i = 0 ; i < fact_to_mutexes.size() ; i++){
@@ -759,36 +797,32 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task) :
     //pddlPrintPDDLProblem(pddl,stdout);
 
 
-	cout << " done" << endl;
+	//cout << "done" << endl;
+    timesplit(PRECPROCESSING);
 }
 
 
-#define clauseNumber(name) clauseCounter[name]+=get_number_of_clauses()-beforeClause;beforeClause=get_number_of_clauses()
+#define clauseNumber(name) clauseCounter[name]+=get_number_of_clauses()-beforeClause;beforeClause=get_number_of_clauses();timesplit(name);
 #define atMostOneParameterValue "at most one parameter value"
 #define actionAllowedArguments "action allowed arguments"
 #define equalsPreconditions "equals preconditions"
 #define staticPrecondition "static preconditions"
 #define oneAction "one Action"
 #define nullary "nullary"
+#define preconditionImplications "precondition implications"
+#define effectImplications "effect implications"
+#define causeVariablesImplications "cause variables implications"
+#define frameAxioms "frame axioms"
 
 
-vector<vector<int>> PartiallyGroundedSAT::generateFactVars(sat_capsule & capsule, int timestep){
-	vector<vector<int>> mutexPredicateVarsTime(all_facts.size());
+vector<int> PartiallyGroundedSAT::generateFactVars(sat_capsule & capsule, int timestep, vector<string> factToString){
+	vector<int> mutexPredicateVarsTime;
 	for (size_t predicate = 0; predicate < all_facts.size(); predicate++){
 	    int grounded_mutex_predicate_var;
 	    grounded_mutex_predicate_var = capsule.new_variable();
-	    mutexPredicateVarsTime[predicate].push_back(grounded_mutex_predicate_var);
-	    string arguments = "("; 
-	    for(size_t object = 0 ; object < all_facts[predicate].second.size() ; object++){
-			if (object) arguments += ", ";
-	        arguments += task.objects[satObjectToPWLObject[all_facts[predicate].second[object]]].getName();
-	    }
-	    arguments += ")";
-	    DEBUG(capsule.registerVariable(grounded_mutex_predicate_var,"predicate@" + to_string(timestep) + "-" + task.predicates[all_facts[predicate].first].getName() + arguments) );
+	    mutexPredicateVarsTime.push_back(grounded_mutex_predicate_var);
+	    DEBUG(capsule.registerVariable(grounded_mutex_predicate_var,"predicate@" + to_string(timestep) + "-" + factToString[predicate]) );
 	}
-
-	
-
 
 	return mutexPredicateVarsTime;
 }
@@ -796,387 +830,673 @@ vector<vector<int>> PartiallyGroundedSAT::generateFactVars(sat_capsule & capsule
 
 
 utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool optimal, bool incremental) {
-	cout << "Not yet implemented!" << endl;
+	//cout << "Not yet implemented!" << endl;
 
-	map<string,int> clauseCounter;
+    int lowerLength = 1;
+    int upperLength = 1000;
 
-    int timesteps = 2;
-    PartiallyGroundedSAT pgs = PartiallyGroundedSAT(task);
-    void* solver = ipasir_init();
-	sat_capsule capsule;
-	int beforeClause = get_number_of_clauses();
-
-	vector<vector<int>> previousTimeMutexPredicateVars = generateFactVars(capsule,0);
-	// TODO: assert that the initial state is true.
-	// one for every mutex should be true
-
-	// nullary predicates initial state
-	std::unordered_map<int,int> lastNullary;
-	for (int n : task.nullary_predicates){
-		int nullaryInInit = capsule.new_variable();
-		lastNullary[n] = nullaryInInit;
-		DEBUG(capsule.registerVariable(nullaryInInit, "nullary#" + to_string(n) + "_" + to_string(0)));
-
-		if (task.initial_state.get_nullary_atoms()[n])
-			assertYes(solver,nullaryInInit);
-		else
-			assertNot(solver,nullaryInInit);
-	}
-
-
-
-	for (int timestep = 0; timestep < timesteps; timestep++){
-
-        std::vector<std::map<int,int>> parameterVarsTime(numberOfArgumentPositions);
-        for (int paramter = 0; paramter < numberOfArgumentPositions; paramter++){
-            int type = typeOfArgument[paramter];
-            int lower = lowerTypeindex[type];
-            int upper = upperTypeindex[type];
-            vector<int> temp;
-
-            for (int o = 0; o < upper - lower + 1; o++){
-                int objectVar = capsule.new_variable();
-                parameterVarsTime[paramter][lower + o] = objectVar;
-                temp.push_back(objectVar);
-                DEBUG(capsule.registerVariable(objectVar, "const@" + to_string(timestep) + "#" + to_string(paramter)
-                    + "-" + task.objects[satObjectToPWLObject[o + lower]].getName()));
-            }
-            // each parameter can have at most one value
-            atMostOne(solver,capsule,temp);
-        }
-		clauseNumber(atMostOneParameterValue);
-		
-        //parameterVars.push_back(parameterVarsTime);
-
-        std::vector<int> actionVarsTime;
-        for (size_t action = 0; action < task.actions.size(); action++){
-            DEBUG(cout << "\t" << task.actions[action].get_name() << endl);
-
-            int actionVar;
-            actionVar = capsule.new_variable();
-            actionVarsTime.push_back(actionVar);
-            DEBUG(capsule.registerVariable(actionVar,"action@" + to_string(timestep) + "-" + task.actions[action].get_name()));
-
-            // typing implications!
-            auto params = task.actions[action].get_parameters();
-            for (size_t l = 0; l < params.size(); l++) {
-                int thisParameterIndex = actionArgumentPositions[action][l];
-                DEBUG(cout << "\t\t" << task.type_names[params[l].type] << ": ");
-                //if (!needToType[{action,l}]){
-                //	DEBUG(cout << "no need to type " << endl);
-                //	continue;
-                //}
-                
-                int lower = lowerTypeindex[params[l].type];
-                int upper = upperTypeindex[params[l].type];
-                DEBUG(for (int m = lower; m <= upper; m++) {
-                    cout << task.objects[satObjectToPWLObject[m]].getName() << " ";
-                }
-                cout << endl);
-
-                //for (int i = 0; i < lower; i++){
-                //	int parameterConstantVar = parameterVarsTime[l][i];
-                //	impliesNot(solver,actionVar,parameterConstantVar);
-                //}
-
-                //for (int i = upper + 1; i < int(task.objects.size()); i++){
-                //	int parameterConstantVar = parameterVarsTime[l][i];
-                //	impliesNot(solver,actionVar,parameterConstantVar);
-                //}
-
-                std::vector<int> allowed;
-                for (int i = 0; i <= upper - lower; i++){
-                    int parameterConstantVar = parameterVarsTime[thisParameterIndex][lower + i];
-                    allowed.push_back(parameterConstantVar);
-                }
-                impliesOr(solver,actionVar,allowed);
-            }
-			clauseNumber(actionAllowedArguments);
-		
-
-            /////// SPECIAL PRECONDITIONS
-            const auto precs = task.actions[action].get_precondition();
-	        for (size_t prec = 0; prec < precs.size(); prec++) {
-            	DEBUG(cout << "\t\tprecondition #" << prec << endl);
-            	
-				const auto & precObjec = precs[prec];
-				int predicate = precObjec.predicate_symbol;
-				if (task.predicates[predicate].getName().rfind("type@", 0) == 0) continue;
-			
-				//bef = get_number_of_clauses();
-			
-				if (task.predicates[predicate].getName().rfind("=", 0) == 0){
-                    int varA = precObjec.arguments[0].index;
-                    int varB = precObjec.arguments[1].index;
-
-                    if (precObjec.negated){
-                        // not equals
-                        if (precObjec.arguments[0].constant){
-                            int myObjIndex = pwlObjToSATObject[varA];
-                            varB = actionArgumentPositions[action][varB];
-                            impliesNot(solver,actionVar, parameterVarsTime[varB][myObjIndex]);
-                        } else if (precObjec.arguments[1].constant){
-                            int myObjIndex = pwlObjToSATObject[varB];
-                            varA = actionArgumentPositions[action][varA];
-                            impliesNot(solver,actionVar, parameterVarsTime[varA][myObjIndex]);
-                        } else {
-                            varA = actionArgumentPositions[action][varA];
-                            varB = actionArgumentPositions[action][varB];
-                            for(int o = max(lowerTypeindex[typeOfArgument[varA]],lowerTypeindex[typeOfArgument[varB]]);
-                                    o <= min(upperTypeindex[typeOfArgument[varA]],upperTypeindex[typeOfArgument[varB]]); o++){
-                                andImpliesNot(solver,actionVar,parameterVarsTime[varA][o], parameterVarsTime[varB][o]);
-                            }
-                        }
-                    } else {
-                        // equals
-                        if (precObjec.arguments[0].constant){
-                            int myObjIndex = pwlObjToSATObject[varA];
-                            varB = actionArgumentPositions[action][varB];
-                            implies(solver,actionVar, parameterVarsTime[varB][myObjIndex]);
-                        } else if (precObjec.arguments[1].constant){
-                            int myObjIndex = pwlObjToSATObject[varB];
-                            varA = actionArgumentPositions[action][varA];
-                            implies(solver,actionVar, parameterVarsTime[varA][myObjIndex]);
-                        } else {
-                            varA = actionArgumentPositions[action][varA];
-                            varB = actionArgumentPositions[action][varB];
-                            for(int o = max(lowerTypeindex[typeOfArgument[varA]],lowerTypeindex[typeOfArgument[varB]]);
-                                    o <= min(upperTypeindex[typeOfArgument[varA]],upperTypeindex[typeOfArgument[varB]]); o++){
-                                andImplies(solver,actionVar,parameterVarsTime[varA][o], parameterVarsTime[varB][o]);
-                                andImplies(solver,actionVar,parameterVarsTime[varB][o], parameterVarsTime[varA][o]);
-                            }
-                        }
-                    }
-		
-					clauseNumber(equalsPreconditions);
-					continue;
-				}
-
-                // special handling for static precondition
-				if (task.predicates[predicate].isStaticPredicate()){
-                    if (preconditionSupportingTuplesFromInit[action][prec].size() == 0){
-                        DEBUG(cout << "\t\tno init support for precondition #" << prec << " with pred " << predicate << " " << task.predicates[predicate].getName() << endl);
-                        assertNot(solver,actionVar); // cannot be supported by init!
-                    } else {
-                        if (preconditionSupportingTuplesFromInit[action][prec].size() == 1){
-                            // if this action is chosen, exactly this tuple has to be used as the precondition
-                            vector<int> tuple = preconditionSupportingTuplesFromInit[action][prec][0].first;
-                            for (size_t j = 0; j < tuple.size(); j++){
-                                int myObjIndex = pwlObjToSATObject[tuple[j]];
-                                if (precObjec.arguments[j].constant){
-                                    if (precObjec.arguments[j].index != tuple[j])
-                                        assertNot(solver,actionVar);
-                                } else {
-                                    int myParam = actionArgumentPositions[action][precObjec.arguments[j].index];
-                                    if (myObjIndex < lowerTypeindex[typeOfArgument[myParam]] || myObjIndex > upperTypeindex[typeOfArgument[myParam]]){
-                                        assertNot(solver,actionVar);
-                                    } else {
-                                        implies(solver,actionVar, parameterVarsTime[myParam][myObjIndex]);
-                                    }
-                                }
-                            }
-                        } else {
-                            if (precObjec.arguments.size() == 1){
-                                vector<int> possibleValues;
-                                
-                                for (size_t i = 0; i < preconditionSupportingTuplesFromInit[action][prec].size(); i++){
-                                    vector<int> tuple = preconditionSupportingTuplesFromInit[action][prec][i].first;
-                                
-                                    int myObjIndex = pwlObjToSATObject[tuple[0]];
-                                    int myParam = actionArgumentPositions[action][precObjec.arguments[0].index];
-                                    int constantVar = parameterVarsTime[myParam][myObjIndex];
-                                    
-                                    possibleValues.push_back(constantVar);
-                                }
-
-                                impliesOr(solver,actionVar,possibleValues);
-                            } else {
-                                bool firstWithNonConst = true;
-                                for (size_t lastPos = 0; lastPos < precObjec.arguments.size() - 1 ; lastPos++){
-                                    // ignore all arguments until we find the first one with a non-constant
-                                    if (precObjec.arguments[lastPos].constant && firstWithNonConst) continue;
-
-                                    map<vector<int>,set<int>> possibleUpto;
-
-                                    // build assignment tuple up to this point
-                                    for (size_t i = 0; i < preconditionSupportingTuplesFromInit[action][prec].size(); i++){
-                                        vector<int> tuple = preconditionSupportingTuplesFromInit[action][prec][i].first;
-                                        vector<int> subTuple;
-                                        subTuple.push_back(actionVar);
-                                    
-                                        for (size_t j = 0; j <= lastPos; j++){
-                                            // push only the non-constants
-                                            if (precObjec.arguments[j].constant) continue;
-                                            int myObjIndex = pwlObjToSATObject[tuple[j]];
-                                            int myParam = actionArgumentPositions[action][precObjec.arguments[j].index];
-                                            int constantVar = parameterVarsTime[myParam][myObjIndex];
-                                            
-                                            subTuple.push_back(constantVar);
-                                        }
-                                        
-                                        if (precObjec.arguments[lastPos + 1].constant) {
-                                            possibleUpto[subTuple].insert(0);
-                                            continue;
-                                        }
-
-                                        int myObjIndex = pwlObjToSATObject[tuple[lastPos + 1]];
-                                        int myParam = actionArgumentPositions[action][precObjec.arguments[lastPos + 1].index];
-                                        int constantVar = parameterVarsTime[myParam][myObjIndex];
-
-
-                                        possibleUpto[subTuple].insert(constantVar);
-                                    }
-
-
-                                    if (!precObjec.arguments[lastPos + 1].constant)
-                                        for (auto & x : possibleUpto){
-                                            andImpliesOr(solver,x.first,x.second);
-                                        }
-
-                                    if (firstWithNonConst){
-                                        vector<int> initial;
-                                        for (auto & x : possibleUpto)
-                                            initial.push_back(x.first[1]);
-
-                                        impliesOr(solver,actionVar,initial);
-                                        firstWithNonConst = false;
-                                    }
-                                }
-                            }
-                        }
-                    }
-					clauseNumber(staticPrecondition);
-                } 
-            }
-        }
-
-
-		// generate variables for successor state
-		vector<vector<int>> currentTimeMutexPredicateVars = generateFactVars(capsule,timestep+1);
-		std::unordered_map<int,int> currentNullary;
-		for (int n : task.nullary_predicates){
-			int nullVar = capsule.new_variable();
-			currentNullary[n] = nullVar;
-			DEBUG(capsule.registerVariable(nullVar,	"nullary#" + to_string(n) + "_" + to_string(timestep+1)));
-		}
-
-
-		// generate clauses for preconditions
-        for (size_t action = 0; action < task.actions.size(); action++){
-            int actionVar = actionVarsTime[action];
-
-            /////// non-special PRECONDITIONS
-            const auto precs = task.actions[action].get_precondition();
-	        for (size_t prec = 0; prec < precs.size(); prec++) {
-            	DEBUG(cout << "\t\tprecondition #" << prec << endl);
-            	
-				const auto & precObjec = precs[prec];
-				int predicate = precObjec.predicate_symbol;
-				if (task.predicates[predicate].getName().rfind("type@", 0) == 0) continue;
-				if (task.predicates[predicate].getName().rfind("=", 0) == 0) continue;
-				if (task.predicates[predicate].isStaticPredicate()) continue;
-
-				// the precondition is "normal"
-				//
-				// TODO action implies its preconditions
-				// for every assignment of the parameters of the precondition assert that the respective fact is true
-				// This should involve iterating over all groundings of the precondition ... so this might be expensive
-			}
-
-			map<int,vector<int>> adders, deleters;
-
-			const auto effs = task.actions[action].get_effects();
-	        for (size_t eff = 0; eff < effs.size(); eff++) {
-            	DEBUG(cout << "\t\teffect #" << eff << endl);
-            	
-				const auto & effObjec = effs[eff];
-
-				if (effObjec.negated){
-					// TODO deleting effect
-				} else {
-					// TODO adding effects
-					//
-					int fact = -1; // the number of the fact this action adds
-					int causeVariable = capsule.new_variable();
-					// TODO register
-					adders[fact].push_back(causeVariable);
-					implies(solver,causeVariable,actionVar);
-					implies(solver,causeVariable,parameterVar1);
-					implies(solver,causeVariable,parameterVar2); // and so on
-				}
-
-			}
-
-			// nullary preconditions
-			for (int p : *setPosNullaryPrec[action])
-				implies(solver,actionVar,lastNullary[p]);
-			for (int p : *setNegNullaryPrec[action])
-				impliesNot(solver,actionVar,lastNullary[p]);
-
-			// nullary effects
-			for (int p : *setPosNullaryEff[action])
-				implies(solver,actionVar,currentNullary[p]);
-			for (int p : *setNegNullaryEff[action])
-				impliesNot(solver,actionVar,currentNullary[p]);
-			clauseNumber(nullary);
-		}
-
-		// TODO Frame axioms
-		// Types: f@t and -f@t+1 -> disjunction over deleters
-		// Types: -f@t and f@t+1 -> disjunction over adders
-		// cause variable C  from the adder/deleter lists
-		// c -> action
-		// c -> parameters
-		// f@t and -f@t+q -> c_1 v c_2 v c_3 v ...
-
-
-		for (int n : task.nullary_predicates){
-			vector<int> adder;
-			for (int a : nullaryAchiever[n])
-			   adder.push_back(actionVarsTime[a]);
-			impliesPosAndNegImpliesOr(solver,currentNullary[n], lastNullary[n], adder);
-
-			vector<int> deleter;
-			for (int d : nullaryDestroyer[n])
-			   deleter.push_back(actionVarsTime[d]);
-			impliesPosAndNegImpliesOr(solver,lastNullary[n], currentNullary[n], deleter);
-		}
-		lastNullary = currentNullary;
-		clauseNumber(nullary);
-		
-
-
-
-        atMostOne(solver,capsule,actionVarsTime);
-        atLeastOne(solver,capsule,actionVarsTime);
-		clauseNumber(oneAction);
-
-		swap(previousTimeMutexPredicateVars,currentTimeMutexPredicateVars);
+    if (limit != -1){
+        lowerLength = upperLength = limit;
     }
 
-	// TODO: assert that the goal is true. This should reference the previousTimeMutexPredicateVars
+    for (int timesteps = lowerLength; timesteps <= upperLength; timesteps++){
+        map<string,int> clauseCounter;
 
-	// nullary goals
-	for (int g : task.goal.positive_nullary_goals)
-		assertYes(solver,lastNullary[g]);	
-    for (int g : task.goal.negative_nullary_goals)
-		assertNot(solver,lastNullary[g]);	
-	clauseNumber(nullary);
+        void* solver = ipasir_init();
+        reset_number_of_clauses();
+        sat_capsule capsule;
+        int beforeClause = get_number_of_clauses();
+
+         for (size_t predicate = 0; predicate < all_facts.size(); predicate++){
+            string groundedPredicate = task.predicates[all_facts[predicate].first].getName()+"("; 
+            for(size_t object = 0 ; object < all_facts[predicate].second.size() ; object++){
+                if (object) groundedPredicate += ", ";
+                groundedPredicate += task.objects[satObjectToPWLObject[all_facts[predicate].second[object]]].getName();
+            }
+            groundedPredicate += ")";
+            factToString.push_back(groundedPredicate);
+        }
+
+        vector<int> previousTimeMutexPredicateVars = generateFactVars(capsule,0, factToString);
+        // TODO: assert that the initial state is true.
+        // one for every mutex should be true
+        set<int> factsInInitialState;
+        for (size_t i = 0; i < task.initial_state.get_relations().size(); i++) {
+            auto rel = task.initial_state.get_relations()[i];
+            auto tuple = task.initial_state.get_tuples_of_relation(i);
+            for (vector<int> groundA: tuple) {
+                int pred = rel.predicate_symbol;
+                vector<int> satTuple;
+                for(int x : groundA){
+                    satTuple.push_back(pwlObjToSATObject[x]);
+                }
+                factsInInitialState.insert(all_facts_index[{pred, satTuple}]);
+            }
+        }
+        for(size_t fact = 0 ; fact < all_facts.size() ; fact++){
+            if(factsInInitialState.count(fact)){
+                //cout << fact << " " << previousTimeMutexPredicateVars[fact] << endl;
+                assertYes(solver,previousTimeMutexPredicateVars[fact]);
+            }else{
+                assertNot(solver,previousTimeMutexPredicateVars[fact]);
+            }
+        }
+
+        // nullary predicates initial state
+        std::unordered_map<int,int> lastNullary;
+        for (int n : task.nullary_predicates){
+            int nullaryInInit = capsule.new_variable();
+            lastNullary[n] = nullaryInInit;
+            DEBUG(capsule.registerVariable(nullaryInInit, "nullary#" + to_string(n) + "_" + to_string(0)));
+
+            if (task.initial_state.get_nullary_atoms()[n])
+                assertYes(solver,nullaryInInit);
+            else
+                assertNot(solver,nullaryInInit);
+        }
 
 
-    DEBUG(capsule.printVariables());
+        std::vector<vector<std::map<int,int>>> parameterVars;
+        vector<vector<int>> actionVars;
 
-	int totalClauses = 0;
-	for (auto [k,v] : clauseCounter){
-		cout << setw(30) << setfill('-') << k << " " << setw(8) << v << endl;
-		totalClauses += v;
-	}
-	cout << setw(30) << setfill('-') << "TOTAL CLAUSES" << " " << setw(8) << totalClauses << " not accounted for " << get_number_of_clauses() - totalClauses << endl;
+        for (int timestep = 0; timestep < timesteps; timestep++){
+            cout <<"TIMESTEP " << timestep << endl;
 
-    int state = ipasir_solve(solver);
-    if (state == 10){
-		DEBUG(capsule.printVariableTruth(solver));
-	}
+            std::vector<std::map<int,int>> parameterVarsTime(numberOfArgumentPositions);
+            for (int paramter = 0; paramter < numberOfArgumentPositions; paramter++){
+                int type = typeOfArgument[paramter];
+                int lower = lowerTypeindex[type];
+                int upper = upperTypeindex[type];
+                vector<int> temp;
+
+                for (int o = 0; o < upper - lower + 1; o++){
+                    int objectVar = capsule.new_variable();
+                    parameterVarsTime[paramter][lower + o] = objectVar;
+                    temp.push_back(objectVar);
+                    DEBUG(capsule.registerVariable(objectVar, "const@" + to_string(timestep) + "#" + to_string(paramter)
+                        + "-" + task.objects[satObjectToPWLObject[o + lower]].getName()));
+                }
+                // each parameter can have at most one value
+                atMostOne(solver,capsule,temp);
+            }
+            clauseNumber(atMostOneParameterValue);
+            
+            parameterVars.push_back(parameterVarsTime);
+
+            std::vector<int> actionVarsTime;
+            for (size_t action = 0; action < task.actions.size(); action++){
+                DEBUG(cout << "\t" << task.actions[action].get_name() << endl);
+
+                int actionVar;
+                actionVar = capsule.new_variable();
+                actionVarsTime.push_back(actionVar);
+                DEBUG(capsule.registerVariable(actionVar,"action@" + to_string(timestep) + "-" + task.actions[action].get_name()));
+
+                // typing implications!
+                auto params = task.actions[action].get_parameters();
+                for (size_t l = 0; l < params.size(); l++) {
+                    int thisParameterIndex = actionArgumentPositions[action][l];
+                    DEBUG(cout << "\t\t" << task.type_names[params[l].type] << ": ");
+                    //if (!needToType[{action,l}]){
+                    //	DEBUG(cout << "no need to type " << endl);
+                    //	continue;
+                    //}
+                    
+                    int lower = lowerTypeindex[params[l].type];
+                    int upper = upperTypeindex[params[l].type];
+
+                    DEBUG(for (int m = lower; m <= upper; m++) {
+                        cout << task.objects[satObjectToPWLObject[m]].getName() << " ";
+                    }
+                    cout << endl);
+
+                    //for (int i = 0; i < lower; i++){
+                    //	int parameterConstantVar = parameterVarsTime[l][i];
+                    //	impliesNot(solver,actionVar,parameterConstantVar);
+                    //}
+
+                    //for (int i = upper + 1; i < int(task.objects.size()); i++){
+                    //	int parameterConstantVar = parameterVarsTime[l][i];
+                    //	impliesNot(solver,actionVar,parameterConstantVar);
+                    //}
+
+                    std::vector<int> allowed;
+                    for (int i = 0; i <= upper - lower; i++){
+                        int parameterConstantVar = parameterVarsTime[thisParameterIndex][lower + i];
+                        allowed.push_back(parameterConstantVar);
+                    }
+                    impliesOr(solver,actionVar,allowed);
+                }
+                clauseNumber(actionAllowedArguments);
+            
+
+                /////// SPECIAL PRECONDITIONS
+                const auto precs = task.actions[action].get_precondition();
+                for (size_t prec = 0; prec < precs.size(); prec++) {
+                    //DEBUG(cout << "\t\tprecondition #" << prec << endl);
+                    
+                    const auto & precObjec = precs[prec];
+                    int predicate = precObjec.predicate_symbol;
+                    if (task.predicates[predicate].getName().rfind("type@", 0) == 0) continue;
+                
+                    //bef = get_number_of_clauses();
+                
+                    if (task.predicates[predicate].getName().rfind("=", 0) == 0){
+                        int varA = precObjec.arguments[0].index;
+                        int varB = precObjec.arguments[1].index;
+
+                        if (precObjec.negated){
+                            // not equals
+                            if (precObjec.arguments[0].constant){
+                                int myObjIndex = pwlObjToSATObject[varA];
+                                varB = actionArgumentPositions[action][varB];
+                                impliesNot(solver,actionVar, parameterVarsTime[varB][myObjIndex]);
+                            } else if (precObjec.arguments[1].constant){
+                                int myObjIndex = pwlObjToSATObject[varB];
+                                varA = actionArgumentPositions[action][varA];
+                                impliesNot(solver,actionVar, parameterVarsTime[varA][myObjIndex]);
+                            } else {
+                                varA = actionArgumentPositions[action][varA];
+                                varB = actionArgumentPositions[action][varB];
+                                for(int o = max(lowerTypeindex[typeOfArgument[varA]],lowerTypeindex[typeOfArgument[varB]]);
+                                        o <= min(upperTypeindex[typeOfArgument[varA]],upperTypeindex[typeOfArgument[varB]]); o++){
+                                    andImpliesNot(solver,actionVar,parameterVarsTime[varA][o], parameterVarsTime[varB][o]);
+                                }
+                            }
+                        } else {
+                            // equals
+                            if (precObjec.arguments[0].constant){
+                                int myObjIndex = pwlObjToSATObject[varA];
+                                varB = actionArgumentPositions[action][varB];
+                                implies(solver,actionVar, parameterVarsTime[varB][myObjIndex]);
+                            } else if (precObjec.arguments[1].constant){
+                                int myObjIndex = pwlObjToSATObject[varB];
+                                varA = actionArgumentPositions[action][varA];
+                                implies(solver,actionVar, parameterVarsTime[varA][myObjIndex]);
+                            } else {
+                                varA = actionArgumentPositions[action][varA];
+                                varB = actionArgumentPositions[action][varB];
+                                for(int o = max(lowerTypeindex[typeOfArgument[varA]],lowerTypeindex[typeOfArgument[varB]]);
+                                        o <= min(upperTypeindex[typeOfArgument[varA]],upperTypeindex[typeOfArgument[varB]]); o++){
+                                    andImplies(solver,actionVar,parameterVarsTime[varA][o], parameterVarsTime[varB][o]);
+                                    andImplies(solver,actionVar,parameterVarsTime[varB][o], parameterVarsTime[varA][o]);
+                                }
+                            }
+                        }
+            
+                        clauseNumber(equalsPreconditions);
+                        continue;
+                    }
+
+                    // special handling for static precondition
+                    if (task.predicates[predicate].isStaticPredicate()){
+                        if (preconditionSupportingTuplesFromInit[action][prec].size() == 0){
+                            //DEBUG(cout << "\t\tno init support for precondition #" << prec << " with pred " << predicate << " " << task.predicates[predicate].getName() << endl);
+                            assertNot(solver,actionVar); // cannot be supported by init!
+                        } else {
+                            if (preconditionSupportingTuplesFromInit[action][prec].size() == 1){
+                                // if this action is chosen, exactly this tuple has to be used as the precondition
+                                vector<int> tuple = preconditionSupportingTuplesFromInit[action][prec][0].first;
+                                for (size_t j = 0; j < tuple.size(); j++){
+                                    int myObjIndex = pwlObjToSATObject[tuple[j]];
+                                    if (precObjec.arguments[j].constant){
+                                        if (precObjec.arguments[j].index != tuple[j])
+                                            assertNot(solver,actionVar);
+                                    } else {
+                                        int myParam = actionArgumentPositions[action][precObjec.arguments[j].index];
+                                        if (myObjIndex < lowerTypeindex[typeOfArgument[myParam]] || myObjIndex > upperTypeindex[typeOfArgument[myParam]]){
+                                            assertNot(solver,actionVar);
+                                        } else {
+                                            implies(solver,actionVar, parameterVarsTime[myParam][myObjIndex]);
+                                        }
+                                    }
+                                }
+                            } else {
+                                if (precObjec.arguments.size() == 1){
+                                    vector<int> possibleValues;
+                                    
+                                    for (size_t i = 0; i < preconditionSupportingTuplesFromInit[action][prec].size(); i++){
+                                        vector<int> tuple = preconditionSupportingTuplesFromInit[action][prec][i].first;
+                                    
+                                        int myObjIndex = pwlObjToSATObject[tuple[0]];
+                                        int myParam = actionArgumentPositions[action][precObjec.arguments[0].index];
+                                        int constantVar = parameterVarsTime[myParam][myObjIndex];
+                                        
+                                        possibleValues.push_back(constantVar);
+                                    }
+
+                                    impliesOr(solver,actionVar,possibleValues);
+                                } else {
+                                    bool firstWithNonConst = true;
+                                    for (size_t lastPos = 0; lastPos < precObjec.arguments.size() - 1 ; lastPos++){
+                                        // ignore all arguments until we find the first one with a non-constant
+                                        if (precObjec.arguments[lastPos].constant && firstWithNonConst) continue;
+
+                                        map<vector<int>,set<int>> possibleUpto;
+
+                                        // build assignment tuple up to this point
+                                        for (size_t i = 0; i < preconditionSupportingTuplesFromInit[action][prec].size(); i++){
+                                            vector<int> tuple = preconditionSupportingTuplesFromInit[action][prec][i].first;
+                                            vector<int> subTuple;
+                                            subTuple.push_back(actionVar);
+                                        
+                                            for (size_t j = 0; j <= lastPos; j++){
+                                                // push only the non-constants
+                                                if (precObjec.arguments[j].constant) continue;
+                                                int myObjIndex = pwlObjToSATObject[tuple[j]];
+                                                int myParam = actionArgumentPositions[action][precObjec.arguments[j].index];
+                                                int constantVar = parameterVarsTime[myParam][myObjIndex];
+                                                
+                                                subTuple.push_back(constantVar);
+                                            }
+                                            
+                                            if (precObjec.arguments[lastPos + 1].constant) {
+                                                possibleUpto[subTuple].insert(0);
+                                                continue;
+                                            }
+
+                                            int myObjIndex = pwlObjToSATObject[tuple[lastPos + 1]];
+                                            int myParam = actionArgumentPositions[action][precObjec.arguments[lastPos + 1].index];
+                                            int constantVar = parameterVarsTime[myParam][myObjIndex];
+
+
+                                            possibleUpto[subTuple].insert(constantVar);
+                                        }
+
+
+                                        if (!precObjec.arguments[lastPos + 1].constant)
+                                            for (auto & x : possibleUpto){
+                                                andImpliesOr(solver,x.first,x.second);
+                                            }
+
+                                        if (firstWithNonConst){
+                                            vector<int> initial;
+                                            for (auto & x : possibleUpto)
+                                                initial.push_back(x.first[1]);
+
+                                            impliesOr(solver,actionVar,initial);
+                                            firstWithNonConst = false;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        clauseNumber(staticPrecondition);
+                    } 
+                }
+            }
+
+            actionVars.push_back(actionVarsTime);
+
+
+            // generate variables for successor state
+            vector<int> currentTimeMutexPredicateVars = generateFactVars(capsule,timestep+1, factToString);
+            std::unordered_map<int,int> currentNullary;
+            for (int n : task.nullary_predicates){
+                int nullVar = capsule.new_variable();
+                currentNullary[n] = nullVar;
+                DEBUG(capsule.registerVariable(nullVar,	"nullary#" + to_string(n) + "_" + to_string(timestep+1)));
+            }
+
+            //DEBUG(cout << "\tRegular Pre Eff" << endl);
+            map<int,vector<int>> adders, deleters;
+            // generate clauses for preconditions
+            for (size_t action = 0; action < task.actions.size(); action++){
+                //DEBUG(cout << "\t" << task.actions[action].get_name() << endl);
+                int actionVar = actionVarsTime[action];
+
+                /////// non-special PRECONDITIONS
+                //std::map<int, std::map<int, int>> translatePreconditionToGlobalArguments;
+                const auto precs = task.actions[action].get_precondition();
+                for (size_t prec = 0; prec < precs.size(); prec++) {
+                    //DEBUG(cout << "\t\tprecondition #" << prec << " " << precs.size() << endl);
+                    const auto & precObjec = precs[prec];
+                    int predicate = precObjec.predicate_symbol;
+                    if (task.predicates[predicate].getName().rfind("type@", 0) == 0) continue;
+                    if (task.predicates[predicate].getName().rfind("=", 0) == 0) continue;
+                    if (task.predicates[predicate].isStaticPredicate()) continue;
+
+                    // the precondition is "normal"
+                    //
+                    // TODO action implies its preconditions
+                    // for every assignment of the parameters of the precondition assert that the respective fact is true
+                    // This should involve iterating over all groundings of the precondition ... so this might be expensive
+                    // WORK HERE!!!!!!!!!!!!!
+
+                    std::vector<int> translatePreconditionToGlobalArguments;
+
+                    for(size_t argument = 0 ; argument < precObjec.arguments.size() ; argument++){
+                        if (precObjec.arguments[argument].constant){
+                            translatePreconditionToGlobalArguments.push_back(-1);
+                            continue;
+                        }
+                        int indexInActionSchema = precObjec.arguments[argument].index;
+                        int actionSchemaToGlobalArguments = actionArgumentPositions[action][indexInActionSchema];
+                        translatePreconditionToGlobalArguments.push_back(actionSchemaToGlobalArguments);
+                    }
+
+                    std::vector<int> lowerLimitPredicate;
+
+                    for(size_t argument = 0 ; argument < precObjec.arguments.size() ; argument++){
+                        if(translatePreconditionToGlobalArguments[argument] == -1){
+                            lowerLimitPredicate.push_back(pwlObjToSATObject[precObjec.arguments[argument].index]);
+                            continue;
+                        }
+                        int type = typeOfArgument[translatePreconditionToGlobalArguments[argument]];
+                        int lower = lowerTypeindex[type];
+                        lowerLimitPredicate.push_back(lower);
+                    }
+
+                    
+                    int lowerIndexGroundedPredicate = all_facts_index[{precObjec.predicate_symbol, lowerLimitPredicate}];
+                    
+                    while(all_facts[lowerIndexGroundedPredicate].first == predicate){
+
+                        std::vector<int> leftImplication;
+                        bool invalidSupport =false;
+                        leftImplication.push_back(actionVarsTime[action]);
+                        for(size_t grounding = 0 ; grounding < all_facts[lowerIndexGroundedPredicate].second.size() ; grounding++){
+                            if(translatePreconditionToGlobalArguments[grounding] == -1){
+                                if (all_facts[lowerIndexGroundedPredicate].second[grounding] == pwlObjToSATObject[precObjec.arguments[grounding].index]) continue;
+                                invalidSupport = true;
+                                break;
+                            }
+                            if (parameterVarsTime[translatePreconditionToGlobalArguments[grounding]].count(all_facts[lowerIndexGroundedPredicate].second[grounding])){
+                                leftImplication.push_back(parameterVarsTime[translatePreconditionToGlobalArguments[grounding]][all_facts[lowerIndexGroundedPredicate].second[grounding]]);
+                            }else{
+                                invalidSupport = true;
+                                break;
+                            }
+
+                        }
+                        if (!invalidSupport)
+                            andImplies(solver, leftImplication, previousTimeMutexPredicateVars[lowerIndexGroundedPredicate]);
+                        leftImplication.clear();
+                        lowerIndexGroundedPredicate++;
+
+                    }
+
+                    translatePreconditionToGlobalArguments.clear();
+                    lowerLimitPredicate.clear();
+
+                }
+                clauseNumber(preconditionImplications);
+
+                const auto effs = task.actions[action].get_effects();
+                for (size_t eff = 0; eff < effs.size(); eff++) {
+                    //DEBUG(cout << "\t\teffect #" << eff  << " " << effs.size() << endl);
+                    
+                    const auto & effObjec = effs[eff];
+
+                    std::vector<int> translateEffectToGlobalArguments;
+
+                    for(size_t argument = 0 ; argument < effObjec.arguments.size() ; argument++){
+                        if (effObjec.arguments[argument].constant){
+                            translateEffectToGlobalArguments.push_back(-1);
+                            continue;
+                        }
+                        int indexInActionSchema = effObjec.arguments[argument].index;
+                        int actionSchemaToGlobalArguments = actionArgumentPositions[action][indexInActionSchema];
+                        translateEffectToGlobalArguments.push_back(actionSchemaToGlobalArguments);
+                    }
+
+                    std::vector<int> lowerLimitPredicate;
+
+                    for(size_t argument = 0 ; argument < effObjec.arguments.size() ; argument++){
+                        if(translateEffectToGlobalArguments[argument] == -1){
+                            lowerLimitPredicate.push_back(pwlObjToSATObject[effObjec.arguments[argument].index]);
+                            continue;
+                        }
+                        int type = typeOfArgument[translateEffectToGlobalArguments[argument]];
+                        int lower = lowerTypeindex[type];
+                        lowerLimitPredicate.push_back(lower);
+                    }
+
+                    int lowerIndexGroundedPredicate = all_facts_index[{effObjec.predicate_symbol, lowerLimitPredicate}];
+
+                    if (effObjec.negated){
+                        // TODO deleting effect
+                        while(all_facts[lowerIndexGroundedPredicate].first == effObjec.predicate_symbol){
+
+                            std::vector<int> leftImplication;
+                            bool invalidSupport =false;
+                            int causeVariable = capsule.new_variable();
+                            DEBUG(capsule.registerVariable(causeVariable, "deleter@" + to_string(timestep) + "-" + factToString[lowerIndexGroundedPredicate]));
+
+                            deleters[lowerIndexGroundedPredicate].push_back(causeVariable);
+                            implies(solver,causeVariable,actionVarsTime[action]);
+                            clauseNumber(causeVariablesImplications);
+
+                            leftImplication.push_back(actionVarsTime[action]);
+                            for(size_t grounding = 0 ; grounding < all_facts[lowerIndexGroundedPredicate].second.size() ; grounding++){
+                                if(translateEffectToGlobalArguments[grounding] == -1){
+                                    if (all_facts[lowerIndexGroundedPredicate].second[grounding] == pwlObjToSATObject[effObjec.arguments[grounding].index]) continue;
+                                    invalidSupport = true;
+                                    break;
+                                }
+                                if (parameterVarsTime[translateEffectToGlobalArguments[grounding]].count(all_facts[lowerIndexGroundedPredicate].second[grounding])){
+                                    leftImplication.push_back(parameterVarsTime[translateEffectToGlobalArguments[grounding]][all_facts[lowerIndexGroundedPredicate].second[grounding]]);
+                                        implies(solver,causeVariable,parameterVarsTime[translateEffectToGlobalArguments[grounding]][all_facts[lowerIndexGroundedPredicate].second[grounding]]);
+                                        clauseNumber(causeVariablesImplications);
+                                }else{
+                                    invalidSupport = true;
+                                    break;
+                                }
+
+                            }
+                            if (!invalidSupport)
+                                andImpliesNot(solver, leftImplication, currentTimeMutexPredicateVars[lowerIndexGroundedPredicate]);
+                            else assertNot(solver, causeVariable);
+                            leftImplication.clear();
+
+                            lowerIndexGroundedPredicate++;
+
+                        }
+                    } else {
+                        // TODO adding effects
+                        //
+
+                        while(all_facts[lowerIndexGroundedPredicate].first == effObjec.predicate_symbol){
+
+                            std::vector<int> leftImplication;
+                            bool invalidSupport =false;
+                            int causeVariable = capsule.new_variable();
+                            DEBUG(capsule.registerVariable(causeVariable, "adder@" + to_string(timestep) + "-" + factToString[lowerIndexGroundedPredicate]));
+
+                            adders[lowerIndexGroundedPredicate].push_back(causeVariable);
+                            implies(solver,causeVariable,actionVarsTime[action]);
+
+                            leftImplication.push_back(actionVarsTime[action]);
+                            for(size_t grounding = 0 ; grounding < all_facts[lowerIndexGroundedPredicate].second.size() ; grounding++){
+                               if(translateEffectToGlobalArguments[grounding] == -1){
+                                    if (all_facts[lowerIndexGroundedPredicate].second[grounding] == pwlObjToSATObject[effObjec.arguments[grounding].index]) continue;
+                                    invalidSupport = true;
+                                    break;
+                                }
+                                if (parameterVarsTime[translateEffectToGlobalArguments[grounding]].count(all_facts[lowerIndexGroundedPredicate].second[grounding])){
+                                    leftImplication.push_back(parameterVarsTime[translateEffectToGlobalArguments[grounding]][all_facts[lowerIndexGroundedPredicate].second[grounding]]);
+                                    implies(solver,causeVariable,parameterVarsTime[translateEffectToGlobalArguments[grounding]][all_facts[lowerIndexGroundedPredicate].second[grounding]]);
+                                    clauseNumber(causeVariablesImplications);
+                                }else{
+                                    invalidSupport = true;
+                                    break;
+                                }
+                            }
+                            if (!invalidSupport)
+                                andImplies(solver, leftImplication, currentTimeMutexPredicateVars[lowerIndexGroundedPredicate]);
+                            else assertNot(solver, causeVariable);
+                            leftImplication.clear();
+
+                            lowerIndexGroundedPredicate++;
+
+                        }
+
+                        //int fact = -1; // the number of the fact this action adds
+                        //int causeVariable = capsule.new_variable();
+                        // TODO register
+
+                        //adders[fact].push_back(causeVariable);
+                        //implies(solver,causeVariable,actionVar);
+                        //implies(solver,causeVariable,parameterVar1);
+                        //implies(solver,causeVariable,parameterVar2); // and so on
+                    }
+
+                    translateEffectToGlobalArguments.clear();
+                    lowerLimitPredicate.clear();
+
+                }
+
+                clauseNumber(effectImplications);
+
+                // nullary preconditions
+                for (int p : *setPosNullaryPrec[action])
+                    implies(solver,actionVar,lastNullary[p]);
+                for (int p : *setNegNullaryPrec[action])
+                    impliesNot(solver,actionVar,lastNullary[p]);
+
+                // nullary effects
+                for (int p : *setPosNullaryEff[action])
+                    implies(solver,actionVar,currentNullary[p]);
+                for (int p : *setNegNullaryEff[action])
+                    impliesNot(solver,actionVar,currentNullary[p]);
+                clauseNumber(nullary);
+            }
+
+            // TODO Frame axioms
+            // Types: f@t and -f@t+1 -> disjunction over deleters
+            // Types: -f@t and f@t+1 -> disjunction over adders
+            // cause variable C  from the adder/deleter lists
+            // c -> action
+            // c -> parameters
+            // f@t and -f@t+q -> c_1 v c_2 v c_3 v ...
+
+            for(size_t fact = 0 ; fact < previousTimeMutexPredicateVars.size() ; fact++){
+                impliesPosAndNegImpliesOr(solver, previousTimeMutexPredicateVars[fact], currentTimeMutexPredicateVars[fact], deleters[fact]);
+                impliesPosAndNegImpliesOr(solver, currentTimeMutexPredicateVars[fact], previousTimeMutexPredicateVars[fact], adders[fact]);
+            }
+            clauseNumber(frameAxioms);
+
+
+            for (int n : task.nullary_predicates){
+                vector<int> adder;
+                for (int a : nullaryAchiever[n])
+                adder.push_back(actionVarsTime[a]);
+                impliesPosAndNegImpliesOr(solver,currentNullary[n], lastNullary[n], adder);
+
+                vector<int> deleter;
+                for (int d : nullaryDestroyer[n])
+                deleter.push_back(actionVarsTime[d]);
+                impliesPosAndNegImpliesOr(solver,lastNullary[n], currentNullary[n], deleter);
+            }
+            lastNullary = currentNullary;
+            clauseNumber(nullary);
+            
+
+
+
+            atMostOne(solver,capsule,actionVarsTime);
+            atLeastOne(solver,capsule,actionVarsTime);
+            clauseNumber(oneAction);
+
+            swap(previousTimeMutexPredicateVars,currentTimeMutexPredicateVars);
+        }
+
+        // TODO: assert that the goal is true. This should reference the previousTimeMutexPredicateVars
+        vector<int> factsInGoalState;
+        for (size_t goal = 0; goal < task.goal.goal.size(); goal++){
+            const AtomicGoal & goalAtom = task.goal.goal[goal];
+            //pddl_fm_atom_t *a = pddlFmNewEmptyAtom(goalAtom.args.size());
+            int pred = goalAtom.predicate;
+            int goalStateFact;
+            vector<int> translatedArgs;
+            for(size_t arg = 0; arg < goalAtom.args.size() ; arg++){
+                translatedArgs.push_back(pwlObjToSATObject[goalAtom.args[arg]]);
+            }
+            for(size_t fact = 0 ; fact < all_facts.size() ; fact++){
+                if(all_facts[fact].first == pred && all_facts[fact].second == translatedArgs){
+                    factsInGoalState.push_back(fact);
+                    break;
+                }
+            }
+            
+        }
+        for(size_t fact = 0 ; fact < all_facts.size() ; fact++){
+            if(std::find(factsInGoalState.begin(), factsInGoalState.end(), fact) != factsInGoalState.end()){
+                assertYes(solver,previousTimeMutexPredicateVars[fact]);
+            }
+        }
+
+
+        // nullary goals
+        for (int g : task.goal.positive_nullary_goals)
+            assertYes(solver,lastNullary[g]);	
+        for (int g : task.goal.negative_nullary_goals)
+            assertNot(solver,lastNullary[g]);	
+        clauseNumber(nullary);
+
+
+        //DEBUG(capsule.printVariables());
+
+        int totalClauses = 0;
+        for (auto [k,v] : clauseCounter){
+            cout << setw(30) << setfill('-') << k << " " << setw(8) << v << endl;
+            totalClauses += v;
+        }
+        cout << setw(30) << setfill('-') << "TOTAL CLAUSES" << " " << setw(8) << totalClauses << " not accounted for " << get_number_of_clauses() - totalClauses << endl;
+
+
+        double totalTime = 0;
+        for (auto [k,v] : timings){
+            cout << setw(30) << setfill('-') << k << " " << setw(8) << v << endl;
+            totalTime += v;
+        }
+        cout << setw(30) << setfill('-') << "TOTAL Time" << " " << setw(8) << totalTime << endl;
+
+        int state = ipasir_solve(solver);
+        timesplit(SATSOLVER);
+        if (state == 10){
+            DEBUG(capsule.printVariableTruth(solver));
+        
+            // extract the plan
+            vector<LiftedOperatorId> plan;
+            for (int time = 0; time < timesteps; time++){
+                cout << "timestep " << time << endl;
+                for (size_t action = 0; action < task.actions.size(); action++){
+                    int var = actionVars[time][action];
+                    if (ipasir_val(solver,var) > 0){
+
+                        cout << "  " << task.actions[action].get_name();
+                        auto params = task.actions[action].get_parameters();
+                        vector<int> arguments;
+                        for (size_t l = 0; l < params.size(); l++) {
+                            int p = actionArgumentPositions[action][l];
+                            cout << " " << l << ":";
+                            for (int o = lowerTypeindex[typeOfArgument[p]] ; o <= upperTypeindex[typeOfArgument[p]] ; o++){
+                                if (ipasir_val(solver,parameterVars[time][p][o]) > 0){
+                                    cout << " " << task.objects[satObjectToPWLObject[o]].getName();
+                                    arguments.push_back(satObjectToPWLObject[o]);
+                                }
+                            }
+                        }
+                        cout << endl;
+                        
+                        LiftedOperatorId op (action, move(arguments));
+                        plan.push_back(op);
+                    }
+                }
+            }
+
+            print_plan(plan,task);
+            cout << "Solution found." << endl;
+            exit(0);
+        
+        
+        } else {
+            DEBUG(cout << "formula is UNSAT" << endl);
+        }
+
+
+    }
 
 
 	return utils::ExitCode::SEARCH_UNSOLVED_INCOMPLETE;
