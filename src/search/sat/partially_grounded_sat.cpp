@@ -722,45 +722,45 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task) :
         sizeToMutexes[mutex_to_facts[i].size()].insert(i);
     }
     
-    
-    while( sizeToMutexes.rbegin()->first /*!= 0*/){
-
-        if (sizeToMutexes.rbegin()->second.size() == 0){
-            sizeToMutexes.erase(sizeToMutexes.rbegin()->first);
-            continue;
-        }
-
-        int largestMutexGroup = *(sizeToMutexes.rbegin()->second.begin());
-
-        selected_mutexes.push_back(largestMutexGroup);
-        
-        for (int fact : mutex_to_facts[largestMutexGroup]){
-            if (!decreased_fact[fact]){
-                //cout << "Fact that is going to be decremented : " << fact << endl;
-                decreased_fact[fact] = true;
-                for (int mutex : fact_to_mutexes[fact]){
-                    //cout << "Mutexes that contain the fact and will have their size decreased in 1 : " << mutex << endl;
-                    int currentNum = num_facts_in_mutex[mutex];
-                    //cout << "num_facts_in_mutex.size() : " << num_facts_in_mutex.size() << endl;
-                    //cout << "Current size of said mutex : " << currentNum << endl;
-                    num_facts_in_mutex[mutex]--;
-
-                    /* cout << "Mutexes of same size :";
-                    for(int a : sizeToMutexes[currentNum]){
-                        cout << " " << a;
-                    }
-                    cout << "\nTrying to delete mutex : " << mutex << endl; */
-
-                    sizeToMutexes[currentNum].erase(mutex);
-                    sizeToMutexes[currentNum-1].insert(mutex);
-                }
-
+    if(sizeToMutexes.size() > 0){
+        while( sizeToMutexes.rbegin()->first /*!= 0*/){
+            if (sizeToMutexes.rbegin()->second.size() == 0){
+                sizeToMutexes.erase(sizeToMutexes.rbegin()->first);
+                continue;
             }
+
+            int largestMutexGroup = *(sizeToMutexes.rbegin()->second.begin());
+
+            selected_mutexes.push_back(largestMutexGroup);
             
+            for (int fact : mutex_to_facts[largestMutexGroup]){
+                if (!decreased_fact[fact]){
+                    //cout << "Fact that is going to be decremented : " << fact << endl;
+                    decreased_fact[fact] = true;
+                    for (int mutex : fact_to_mutexes[fact]){
+                        //cout << "Mutexes that contain the fact and will have their size decreased in 1 : " << mutex << endl;
+                        int currentNum = num_facts_in_mutex[mutex];
+                        //cout << "num_facts_in_mutex.size() : " << num_facts_in_mutex.size() << endl;
+                        //cout << "Current size of said mutex : " << currentNum << endl;
+                        num_facts_in_mutex[mutex]--;
+
+                        /* cout << "Mutexes of same size :";
+                        for(int a : sizeToMutexes[currentNum]){
+                            cout << " " << a;
+                        }
+                        cout << "\nTrying to delete mutex : " << mutex << endl; */
+
+                        sizeToMutexes[currentNum].erase(mutex);
+                        sizeToMutexes[currentNum-1].insert(mutex);
+                    }
+
+                }
+                
+            }
+
         }
-
     }
-
+    
     
     cout << "Selected mutexes :";
     for(size_t i = 0 ; i < selected_mutexes.size() ; i++){
@@ -1395,7 +1395,7 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
 
 
             atMostOne(solver,capsule,actionVarsTime);
-            atLeastOne(solver,capsule,actionVarsTime);
+             if (limit == -1) atLeastOne(solver,capsule,actionVarsTime);
             clauseNumber(oneAction);
 
             swap(previousTimeMutexPredicateVars,currentTimeMutexPredicateVars);
