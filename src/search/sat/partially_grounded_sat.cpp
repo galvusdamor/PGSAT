@@ -63,6 +63,30 @@ int increase(vector<int> lower, vector<int> upper, vector<int> &current, int ind
     }
 }
 
+void generateCombinations(const vector<vector<int>>& input, vector<int>& current, int depth, vector<vector<int>>& result) {
+    // If the current combination has elements from all vectors, add it to the result
+    if (depth == input.size()) {
+        result.push_back(current);
+        return;
+    }
+
+    // Iterate through each element in the current vector
+    for (int i = 0; i < input[depth].size(); ++i) {
+        current[depth] = input[depth][i]; // Choose an element from the current vector
+        generateCombinations(input, current, depth + 1, result); // Move to the next vector
+    }
+}
+
+// Wrapper function to call the recursive function and initiate the process
+vector<vector<int>> getCombinations(const vector<vector<int>>& input) {
+    vector<vector<int>> result;
+    if (input.empty()) return result; // If input is empty, return an empty result
+
+    vector<int> current(input.size()); // Placeholder for the current combination
+    generateCombinations(input, current, 0, result); // Start recursive generation
+    return result;
+}
+
 bool is_mutex_group_contained_in_assignement(pddl_lifted_mgroup_t * m1, pddl_lifted_mgroup_t *m2, std::vector<int> & m1VarTom2Var, std::vector<bool> & m2VarAssigned, pddl_t * pddl, int pos = 0){
 
 	if (pos == m1VarTom2Var.size()){
@@ -189,6 +213,51 @@ bool is_mutex_group_contained_in(pddl_lifted_mgroup_t * m1, pddl_lifted_mgroup_t
 
 
 
+map<int,map<int,map<int,map<int,map<int, map<int, map<vector<int>,int>>>>>>> equals_var_map;
+vector<map<pair<int, int>, int>> countedOfType;
+
+int PartiallyGroundedSAT::get_equals_var(void* solver, sat_capsule & capsule, int time_action, int time_state, int action_argument_position,
+                    int FAM_group, int param_id, vector<int> free_variable_grounding, int counted_var,
+                    const vector<int> & counted_var_objects, int counted_var_type, const vector<map<int,int>> & parameterVars){
+    if (equals_var_map[time_action][time_state][action_argument_position][FAM_group][param_id][counted_var].count(free_variable_grounding))
+        return equals_var_map[time_action][time_state][action_argument_position][FAM_group][param_id][counted_var][free_variable_grounding];
+
+    int newVar = capsule.new_variable();
+    // registering
+    equals_var_map[time_action][time_state][action_argument_position][FAM_group][param_id][counted_var][free_variable_grounding] = newVar;
+
+    for(int object = lowerTypeindex[typeOfArgument[action_argument_position]] ; object <= upperTypeindex[typeOfArgument[action_argument_position]] ; object++){
+        if (object < lowerTypeindex[counted_var_type]) continue;
+        if (object > upperTypeindex[counted_var_type]) continue;
+        int parameterObject =  parameterVars[action_argument_position].at(object);
+        andImplies(solver, newVar, parameterObject, counted_var_objects[object - lowerTypeindex[counted_var_type]]);
+        andImplies(solver, newVar, counted_var_objects[object - lowerTypeindex[counted_var_type]], parameterObject);
+        andImplies(solver, counted_var_objects[object - lowerTypeindex[counted_var_type]], parameterObject, newVar);
+    }
+
+    return newVar;
+}
+
+int PartiallyGroundedSAT::get_counted_of_type_var(void* solver, sat_capsule & capsule, int time_step, int action_argument_position, int type, const vector<map<int,int>> & parameterVars){
+    if (countedOfType[time_step].count({action_argument_position,type}))
+        return countedOfType[time_step][{action_argument_position,type}];
+
+    int newVar = capsule.new_variable();
+    // registering
+    countedOfType[time_step][{action_argument_position,type}] = newVar;
+
+
+    for(int object = lowerTypeindex[typeOfArgument[action_argument_position]] ; object <= upperTypeindex[typeOfArgument[action_argument_position]] ; object++){
+        int parameterObject =  parameterVars[action_argument_position].at(object);
+        if(object >= lowerTypeindex[type] && object <= upperTypeindex[type]){
+            implies(solver, parameterObject, newVar);
+            continue;
+        }
+        impliesNot(solver, parameterObject, newVar);
+    }
+
+    return newVar;
+}
 
 
 
@@ -249,6 +318,7 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task) :
     pddlPredsInitEq(&pddl->pred);
 
     std::vector<int> powerLiftedPredicatesToCPDDLPredicates (task.predicates.size());
+    std::vector<int> CPDDLPredicatesToPWLPredicates (task.predicates.size());
     for (tSize pred = 0; pred < task.predicates.size(); pred++) {
         cout << task.predicates[pred].getName() << endl;
         if (task.predicates[pred].getName() == "=") {
@@ -264,6 +334,9 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task) :
         for(int i = 0 ; i < predP->param_size ; i++){
             pddlPredSetParamType(predP, i, predTypes[i]+1);
         }
+    }
+    for(size_t i = 0 ; i < powerLiftedPredicatesToCPDDLPredicates.size() ; i++){
+        CPDDLPredicatesToPWLPredicates[powerLiftedPredicatesToCPDDLPredicates[i]] = i;
     }
 
 
@@ -478,23 +551,62 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task) :
     }
 
     
-
-
-    vector<set<pair<int, int>>> mutex_fixed_variable;
-    vector<map<string, set<pair<int, int>>>> mutex_counted_variable;
+    clearer.clear();//{FAM -> {predicates -> [freeOrCounted][index, param_id, type]}}
+    set<int> predicatesInFAM;
     for (int i = 0; i < lifted_mgroups.mgroup_size; i++){
         if (pruned[i]) continue;
-        set<pair<int, int>> mutex_fixed_variable_aux;
-        map<string, set<pair<int, int>>> mutex_counted_variable_aux;
         for (int j = 0; j < (lifted_mgroups.mgroup + i)->cond.size; j++){
             const pddl_fm_atom_t *atom = pddlFmToAtomConst((lifted_mgroups.mgroup + i)->cond.fm[j]);
-            mutex_counted_variable_aux[pddl->pred.pred[atom->pred].name].size();
+            map<string, vector<vector<int>>> aux;
             for (int k = 0; k < atom->arg_size; k++){
                 if (atom->arg[k].param >= 0){
                     int param_id = atom->arg[k].param;
                     const pddl_param_t *p = (lifted_mgroups.mgroup + i)->param.param + param_id;
                     if (p->is_counted_var){
-                        mutex_counted_variable_aux[pddl->pred.pred[atom->pred].name].insert({param_id , p->type-1});
+                        vector<int> x = {k, param_id, p->type-1};
+                        aux["counted"].push_back(x);
+                    }else{
+                        vector<int> x = {k, param_id, p->type-1};
+                        aux["free"].push_back(x);
+                    }
+                }
+            }
+            clearer[i][CPDDLPredicatesToPWLPredicates[atom->pred]] = aux;
+            predicatesInFAM.insert(CPDDLPredicatesToPWLPredicates[atom->pred]);
+        }
+    }
+
+    DEBUG(
+        for (auto const& [key, val] : clearer){
+            cout << "FAM : " << key << endl;
+            for (auto const& [key1, val1] : clearer[key]){
+                cout << "\tPredicate : " << key1 << endl;
+                for(auto const& [key2, val2] : clearer[key][key1]){
+                    cout << "\t\tType of variable : " << key2 << endl;
+                    for(size_t vars = 0 ; vars < clearer[key][key1][key2].size() ; vars++){
+                        cout << "\t\t\tIndex : " << clearer[key][key1][key2][vars][0] << " ; ParamId : " << clearer[key][key1][key2][vars][1] << " ; Type : " << clearer[key][key1][key2][vars][2] << endl;
+                    }
+                }
+            }
+        }
+    );
+
+
+    vector<set<pair<int, int>>> mutex_fixed_variable;
+    vector<map<int, set<pair<int, int>>>> mutex_counted_variable;
+    for (int i = 0; i < lifted_mgroups.mgroup_size; i++){
+        if (pruned[i]) continue;
+        set<pair<int, int>> mutex_fixed_variable_aux;
+        map<int, set<pair<int, int>>> mutex_counted_variable_aux;
+        for (int j = 0; j < (lifted_mgroups.mgroup + i)->cond.size; j++){
+            const pddl_fm_atom_t *atom = pddlFmToAtomConst((lifted_mgroups.mgroup + i)->cond.fm[j]);
+            mutex_counted_variable_aux[CPDDLPredicatesToPWLPredicates[atom->pred]].size();
+            for (int k = 0; k < atom->arg_size; k++){
+                if (atom->arg[k].param >= 0){
+                    int param_id = atom->arg[k].param;
+                    const pddl_param_t *p = (lifted_mgroups.mgroup + i)->param.param + param_id;
+                    if (p->is_counted_var){
+                        mutex_counted_variable_aux[CPDDLPredicatesToPWLPredicates[atom->pred]].insert({param_id , p->type-1});
                     }else{
                         mutex_fixed_variable_aux.insert({param_id, p->type-1});
                     }
@@ -503,6 +615,17 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task) :
         }
         mutex_fixed_variable.push_back(mutex_fixed_variable_aux);
         mutex_counted_variable.push_back(mutex_counted_variable_aux);
+    }
+
+    vector<int> highestCountedVars(mutex_counted_variable.size(), 0);
+    for(size_t FAM = 0 ; FAM < highestCountedVars.size() ; FAM++){
+        for (auto const& [key, val] : mutex_counted_variable[FAM]){
+            for(auto p : val){
+                if(p.first > highestCountedVars[FAM]){
+                    highestCountedVars[FAM] = p.first;
+                }
+            }
+        }
     }
 
 
@@ -638,31 +761,16 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task) :
     for(size_t facts = 0 ; facts < all_facts.size() ; facts++){
         vector<int> mutexes_with_fact;
         pair<int, vector<int>> fact = all_facts[facts];
-
-        //cout << endl << endl << endl << "||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||" << endl;
-        //cout << "Predicate : " << fact.first << "; Objects :";
-        //for(size_t j = 0 ; j < fact.second.size() ; j++){
-        //    cout << " " << fact.second[j] << " " << task.objects[satObjectToPWLObject[fact.second[j]]].getName();
-        //}
-        //cout << endl;
-
-        //cout << endl << endl << fact.first << " " << task.predicates[fact.first].getName() << endl;
         for(size_t mutexes = 0 ; mutexes < fam_based_mutexes.size() ; mutexes++){
             pair<int, vector<int>> mutex = fam_based_mutexes[mutexes];
-            //pddl_lifted_mgroup_t FAM_group = lifted_mgroups.mgroup[FAM_group_indexes[mutex.first]];
             for (int j = 0; j < (lifted_mgroups.mgroup + FAM_group_indexes[mutex.first])->cond.size; j++){
                 const pddl_fm_atom_t *atom = pddlFmToAtomConst((lifted_mgroups.mgroup + FAM_group_indexes[mutex.first])->cond.fm[j]);
                 if(pddl->pred.pred[atom->pred].id == powerLiftedPredicatesToCPDDLPredicates[fact.first]){
-                    //cout << "entered the if checking if predicates are the same\n";
                     bool add = true;
-                    //cout << "=============================================" << endl;
-                    //cout << "Arg size " << atom->arg_size <<  " fam group " << FAM_group_indexes[mutex.first] << endl;
                     for (int k = 0; k < atom->arg_size; k++){
                         if (atom->arg[k].param >= 0){
                             int param_id = atom->arg[k].param;
                             const pddl_param_t *p = (lifted_mgroups.mgroup + FAM_group_indexes[mutex.first])->param.param + param_id;
-                            //cout << "p->is_counted_var : " << p->is_counted_var << "; fact.second[k] : " << fact.second[k] << "; mutex.second[param_id] : " << mutex.second[param_id] << "; param_id : " << param_id << endl;
-                            //cout << "p->is_counted_var : " << p->is_counted_var << "; type_of_object[fact.second[k]] : " << type_of_object[satObjectToPWLObject[fact.second[k]]] << "; p->type-1 : " << p->type-1 << endl;
                             if (!p->is_counted_var && fact.second[k] != mutex.second[param_id]){
                                 add = false;
                                 break;
@@ -671,13 +779,10 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task) :
                                 break;
                             }
                         }else if (atom->arg[k].param < 0 && atom->arg[k].obj != satObjectToPWLObject[fact.second[k]]){
-                            //cout << "Arg pos " << k << " " << atom->arg[k].param << " " << task.objects[atom->arg[k].obj].getName() << " " 
-                            //    <<  task.objects[satObjectToPWLObject[fact.second[k]]].getName() <<  " add " << add << endl;
                             add = false;
                             break;
                         }
                     }
-                    //cout << add << endl;
                     if (add){
                         mutexes_with_fact.push_back(mutexes);
                     }
@@ -685,7 +790,6 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task) :
             }
         }
 
-        //fact_to_mutexes[facts].size();
         fact_to_mutexes[facts] = mutexes_with_fact;
         mutexes_with_fact.clear();
     }
@@ -760,6 +864,146 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task) :
 
         }
     }
+
+
+    map<int, map<vector<int>, vector<vector<int>>>> mutexFDRVars;
+    for(size_t selected_mutex = 0 ; selected_mutex < selected_mutexes.size() ; selected_mutex++){
+        pair<int, vector<int>> mutex = fam_based_mutexes[selected_mutexes[selected_mutex]];
+        mutexFDRVars[mutex.first][mutex.second].size();
+        for(int filler_vecs = 0 ; filler_vecs <= highestCountedVars[mutex.first]+1 ; filler_vecs++){
+            mutexFDRVars[mutex.first][mutex.second].push_back(vector<int>());
+        }
+        set<int> countedVarsAdded;
+        for (auto const& [key, val] : mutex_counted_variable[mutex.first]){
+            mutexFDRVars[mutex.first][mutex.second][highestCountedVars[mutex.first]+1].push_back(key);
+            for(auto p : val){
+                if(countedVarsAdded.find(p.first) != countedVarsAdded.end()){
+                    continue;
+                }else{
+                    countedVarsAdded.insert(p.first);
+                    for(int obj = lowerTypeindex[p.second] ; obj <= upperTypeindex[p.second] ; obj++){
+                        mutexFDRVars[mutex.first][mutex.second][p.first].push_back(obj);
+                    }
+                }
+            }
+        }
+        mutexFDRVars[mutex.first][mutex.second][highestCountedVars[mutex.first]+1].push_back(-1);
+    }
+
+    /* DEBUG(
+        cout << "---------------FDR variables data structure : --------------------\n";
+        for(size_t FAM = 0 ; FAM < mutexFDRVars.size() ; FAM++){
+            cout << "FAM number : " << FAM << endl;
+            for(auto const& [key, val] : mutexFDRVars[FAM]){
+                cout << "\tGrounded Free Vars :";
+                for(size_t gfv = 0 ; gfv < key.size() ; gfv++){
+                    cout << " " << key[gfv];
+                }
+                cout << endl;
+                cout << "\t\tGrounded Counted Vars :<";
+                for(size_t num_cv = 0 ; num_cv < val.size() ; num_cv++){
+                    cout << "<";
+                    for(size_t gcv = 0 ; gcv < val[num_cv].size() ; gcv++){
+                        cout << " " << val[num_cv][gcv];
+                    }
+                    cout << "> ";
+                }
+                cout << ">\n";
+            }
+        }
+    ); */
+
+    //map<int, map<int, vector<map<string, vector<vector<int>>>>>> clearer
+    idek.clear();//pred -> {[typesOfArguments] -> {Fam -> {[[allFreeGroundings]]}}}
+    for(size_t actions = 0 ; actions < task.actions.size() ; actions++){
+        for(size_t preconditions = 0 ; preconditions < task.actions[actions].get_precondition().size() ; preconditions++){
+            if(predicatesInFAM.find(task.actions[actions].get_precondition()[preconditions].predicate_symbol) == predicatesInFAM.end()) continue;
+            vector<int> typesOfArguments;
+            for(size_t argument = 0 ; argument < task.actions[actions].get_precondition()[preconditions].arguments.size() ; argument++){
+                    int indexInAction = task.actions[actions].get_precondition()[preconditions].arguments[argument].index;
+                    typesOfArguments.push_back(task.actions[actions].get_parameters()[indexInAction].type);
+            }
+            for (auto const& [FAM, mapOfPredicates] : clearer){
+                for (auto const& [pred, v] : mapOfPredicates){
+                    if (pred == task.actions[actions].get_precondition()[preconditions].predicate_symbol){
+                        vector<vector<int>> objectsToCombine;
+                        for(size_t freeVars = 0 ; freeVars < clearer[FAM][pred]["free"].size() ; freeVars++){
+                            int indexInPred = clearer[FAM][pred]["free"][freeVars][0];
+                            int famVariableType = clearer[FAM][pred]["free"][freeVars][2];
+                            vector<int> objects;
+
+                            int intersectionLower = max(lowerTypeindex[typesOfArguments[indexInPred]], lowerTypeindex[famVariableType]);
+                            int intersectionUpper = min(upperTypeindex[typesOfArguments[indexInPred]], upperTypeindex[famVariableType]);
+
+                            for(int lowerObj = intersectionLower ; lowerObj <= intersectionUpper ; lowerObj++){
+                                objects.push_back(lowerObj);
+                            }
+                            objectsToCombine.push_back(objects);
+                        }
+                        vector<vector<int>> freeGroundings = getCombinations(objectsToCombine);
+                        if (freeGroundings.size())
+                            idek[pred][typesOfArguments][FAM] = freeGroundings;
+                    }
+                }
+            }
+        }
+        for(size_t effects = 0 ; effects < task.actions[actions].get_effects().size() ; effects++){
+            if(predicatesInFAM.find(task.actions[actions].get_effects()[effects].predicate_symbol) == predicatesInFAM.end()) continue;
+            vector<int> typesOfArguments;
+            for(size_t argument = 0 ; argument < task.actions[actions].get_effects()[effects].arguments.size() ; argument++){
+                    int indexInAction = task.actions[actions].get_effects()[effects].arguments[argument].index;
+                    typesOfArguments.push_back(task.actions[actions].get_parameters()[indexInAction].type);
+            }
+            for (auto const& [FAM, mapOfPredicates] : clearer){
+                for (auto const& [pred, v] : mapOfPredicates){
+                    if (pred == task.actions[actions].get_effects()[effects].predicate_symbol){
+                        vector<vector<int>> objectsToCombine;
+                        for(size_t freeVars = 0 ; freeVars < clearer[FAM][pred]["free"].size() ; freeVars++){
+                            int indexInPred = clearer[FAM][pred]["free"][freeVars][0];
+                            int famVariableType = clearer[FAM][pred]["free"][freeVars][2];
+                            vector<int> objects;
+
+                            int intersectionLower = max(lowerTypeindex[typesOfArguments[indexInPred]], lowerTypeindex[famVariableType]);
+                            int intersectionUpper = min(upperTypeindex[typesOfArguments[indexInPred]], upperTypeindex[famVariableType]);
+
+                            for(int lowerObj = intersectionLower ; lowerObj <= intersectionUpper ; lowerObj++){
+                                objects.push_back(lowerObj);
+                            }
+                            objectsToCombine.push_back(objects);
+                        }
+                        vector<vector<int>> freeGroundings = getCombinations(objectsToCombine);
+                        if (freeGroundings.size())
+                            idek[pred][typesOfArguments][FAM] = freeGroundings;
+                    }
+                }
+            }
+        }
+    }
+
+    /* DEBUG(
+        for (auto const& [pred, typesOfArgumentsMap] : idek){
+            cout << "Predicate : " << pred << endl;
+            for(auto const& [typesOfArguments, FAMMap] : idek[pred]){
+                cout << "\tTypes of arguments :" << "length : ";
+                for(size_t args = 0 ; args < typesOfArguments.size() ; args++){
+                    cout << " " << typesOfArguments[args];
+                }
+                cout << endl;
+                for(auto const& [FAM, freeGroundings] : idek[pred][typesOfArguments]){
+                    cout << "\t\tFAM : " << FAM << endl;
+                    for(size_t grounding = 0 ; grounding < freeGroundings.size() ; grounding++){
+                        cout << "\t\t\t Grounding of Free Vars :";
+                        for(size_t freeVarObject = 0 ; freeVarObject < freeGroundings[grounding].size() ; freeVarObject++){
+                            cout << " " << freeGroundings[grounding][freeVarObject];
+                        }
+                        cout << endl;
+                    }
+                }
+            }
+        }
+    ); */
+    
+    exit(0);
     
     
     cout << "Selected mutexes :";
@@ -796,8 +1040,6 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task) :
     //pddlPrintPDDLDomain(pddl,stdout);
     //pddlPrintPDDLProblem(pddl,stdout);
 
-
-	//cout << "done" << endl;
     timesplit(PRECPROCESSING);
 }
 
@@ -826,11 +1068,28 @@ vector<int> PartiallyGroundedSAT::generateFactVars(sat_capsule & capsule, int ti
 
 	return mutexPredicateVarsTime;
 }
+map<int, map<vector<int>, vector<vector<int>>>> PartiallyGroundedSAT::generateFAMVars(void* solver, sat_capsule & capsule, int timestep){
+    map<int, map<vector<int>, vector<vector<int>>>> mutexFDRSATVarsTime;
+    for(size_t FAM = 0 ; FAM < mutexFDRVars.size() ; FAM++){
+        for (auto const& [key, val] : mutexFDRVars[FAM]){
+            mutexFDRSATVarsTime[FAM][key].size();
+            for(size_t num_vec = 0 ; num_vec < mutexFDRVars[FAM][key].size() ; num_vec++){
+                mutexFDRSATVarsTime[FAM][key].push_back(vector<int>());
+                for(size_t objs = 0 ; objs < mutexFDRVars[FAM][key][num_vec].size() ; objs++){
+                    int groundedCountedObjectVar = capsule.new_variable();
+                    mutexFDRSATVarsTime[FAM][key][num_vec].push_back(groundedCountedObjectVar);
+                    //ADD DEBUG OUTPUT
+                }
+                atMostOne(solver, capsule, mutexFDRSATVarsTime[FAM][key][num_vec]);
+            }
+        }
+    }
+    return mutexFDRSATVarsTime;
+}
 
 
 
 utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool optimal, bool incremental) {
-	//cout << "Not yet implemented!" << endl;
 
     int lowerLength = 1;
     int upperLength = 1000;
@@ -858,6 +1117,7 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
         }
 
         vector<int> previousTimeMutexPredicateVars = generateFactVars(capsule,0, factToString);
+        map<int, map<vector<int>, vector<vector<int>>>> mutexFDRSATVarsTime = generateFAMVars(solver, capsule,0);
         // TODO: assert that the initial state is true.
         // one for every mutex should be true
         set<int> factsInInitialState;
@@ -898,6 +1158,7 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
 
         std::vector<vector<std::map<int,int>>> parameterVars;
         vector<vector<int>> actionVars;
+        vector<map<int, map<vector<int>, vector<vector<int>>>>> mutexFDRSATVars;
 
         for (int timestep = 0; timestep < timesteps; timestep++){
             cout <<"TIMESTEP " << timestep << endl;
@@ -1128,9 +1389,10 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
 
             actionVars.push_back(actionVarsTime);
 
-
+ 
             // generate variables for successor state
             vector<int> currentTimeMutexPredicateVars = generateFactVars(capsule,timestep+1, factToString);
+             map<int, map<vector<int>, vector<vector<int>>>> mutexFDRSATVarsNextTime = generateFAMVars(solver, capsule, timestep+1);
             std::unordered_map<int,int> currentNullary;
             for (int n : task.nullary_predicates){
                 int nullVar = capsule.new_variable();
@@ -1163,6 +1425,9 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
                     // This should involve iterating over all groundings of the precondition ... so this might be expensive
                     // WORK HERE!!!!!!!!!!!!!
 
+                    //vector<map<vector<int>, vector<vector<int>>>> mutexFDRVars(mutex_fixed_variable.size());[for each FAM : {<Free grounding> -> <COunted Grounding>}]
+                    //map<int, map<int, vector<map<string, vector<vector<int>>>>>> clearer;//{FAM -> {predicates -> [freeOrCounted][index, param_id, type]}}
+                    //map<int, map<vector<int>, map<int, map<int, vector<vector<int>>>>>> idek;//pred -> {[typesOfArguments] -> {Fam -> {[[allFreeGroundings]]}}}
                     std::vector<int> translatePreconditionToGlobalArguments;
 
                     for(size_t argument = 0 ; argument < precObjec.arguments.size() ; argument++){
@@ -1176,6 +1441,7 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
                     }
 
                     std::vector<int> lowerLimitPredicate;
+                    std::vector<int> typesOfPredicate;
 
                     for(size_t argument = 0 ; argument < precObjec.arguments.size() ; argument++){
                         if(translatePreconditionToGlobalArguments[argument] == -1){
@@ -1184,11 +1450,46 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
                         }
                         int type = typeOfArgument[translatePreconditionToGlobalArguments[argument]];
                         int lower = lowerTypeindex[type];
+                        typesOfPredicate.push_back(type);
                         lowerLimitPredicate.push_back(lower);
                     }
 
                     
                     int lowerIndexGroundedPredicate = all_facts_index[{precObjec.predicate_symbol, lowerLimitPredicate}];
+
+                    map<int, vector<vector<int>>> correspondingFAMs = idek[predicate][typesOfPredicate];
+                    for(auto const& [key, val] : correspondingFAMs){
+                        for(size_t grounding = 0 ; grounding < val.size() ; grounding++){
+                            vector<int> leftImplication;
+                            vector<int> rightImplication;
+                            leftImplication.push_back(actionVar);
+                            for(size_t freeVars = 0 ; freeVars < clearer[key][predicate]["free"].size() ; freeVars++){
+                                int trltToGlobalIndex = translatePreconditionToGlobalArguments[clearer[key][predicate]["free"][freeVars][0]];
+                                leftImplication.push_back(parameterVarsTime[trltToGlobalIndex][val[grounding][freeVars]]);
+                            }
+                            for(size_t countedVars = 0 ; countedVars < clearer[key][predicate]["counted"].size() ; countedVars++){
+                                const vector<int> & counted_var_info = clearer[key][predicate]["counted"][countedVars];
+                                int trltToGlobalIndex = translatePreconditionToGlobalArguments[counted_var_info[0]];
+                                int countedVariableType = counted_var_info[2];
+
+                                const vector<int> & counted_var_objects = mutexFDRSATVarsTime[key][val[grounding]][counted_var_info[1]];
+                                int cntOfType = get_counted_of_type_var(solver, capsule, timestep, trltToGlobalIndex, countedVariableType, parameterVarsTime);
+                                int equals_var = get_equals_var(solver, capsule, timestep, timestep, trltToGlobalIndex, key, counted_var_info[1], val[grounding], countedVars,
+                                    counted_var_objects, countedVariableType, parameterVarsTime);
+                                leftImplication.push_back(cntOfType);
+                                rightImplication.push_back(equals_var);
+                            }
+                            for(size_t p = 0 ; p < mutexFDRVars[key][val[grounding]][mutexFDRVars[key][val[grounding]].size()-1].size() ; p++){
+                                if(mutexFDRVars[key][val[grounding]][mutexFDRVars[key][val[grounding]].size()-1][p] == predicate){
+                                    rightImplication.push_back(mutexFDRSATVarsTime[key][val[grounding]][mutexFDRVars[key][val[grounding]].size()-1][p]);
+                                    break;
+                                }
+                            }
+
+                            for (const int & l : rightImplication)
+                                andImplies(solver,leftImplication,l);
+                        }
+                    }
                     
                     while(all_facts[lowerIndexGroundedPredicate].first == predicate){
 
@@ -1227,7 +1528,7 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
                     //DEBUG(cout << "\t\teffect #" << eff  << " " << effs.size() << endl);
                     
                     const auto & effObjec = effs[eff];
-
+                    int predicate = effObjec.predicate_symbol;
                     std::vector<int> translateEffectToGlobalArguments;
 
                     for(size_t argument = 0 ; argument < effObjec.arguments.size() ; argument++){
@@ -1241,6 +1542,7 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
                     }
 
                     std::vector<int> lowerLimitPredicate;
+                    std::vector<int> typesOfPredicate;
 
                     for(size_t argument = 0 ; argument < effObjec.arguments.size() ; argument++){
                         if(translateEffectToGlobalArguments[argument] == -1){
@@ -1249,6 +1551,7 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
                         }
                         int type = typeOfArgument[translateEffectToGlobalArguments[argument]];
                         int lower = lowerTypeindex[type];
+                        typesOfPredicate.push_back(type);
                         lowerLimitPredicate.push_back(lower);
                     }
 
@@ -1256,6 +1559,40 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
 
                     if (effObjec.negated){
                         // TODO deleting effect
+
+                        map<int, vector<vector<int>>> correspondingFAMs = idek[predicate][typesOfPredicate];
+                        for(auto const& [key, val] : correspondingFAMs){
+                            for(size_t grounding = 0 ; grounding < val.size() ; grounding++){
+                                vector<int> negation;
+                                negation.push_back(actionVar);
+                                for(size_t freeVars = 0 ; freeVars < clearer[key][predicate]["free"].size() ; freeVars++){
+                                    int trltToGlobalIndex = translateEffectToGlobalArguments[clearer[key][predicate]["free"][freeVars][0]];
+                                    negation.push_back(parameterVarsTime[trltToGlobalIndex][val[grounding][freeVars]]);
+                                }
+                                for(size_t countedVars = 0 ; countedVars < clearer[key][predicate]["counted"].size() ; countedVars++){
+                                    const vector<int> & counted_var_info = clearer[key][predicate]["counted"][countedVars];
+                                    int trltToGlobalIndex = translateEffectToGlobalArguments[counted_var_info[0]];
+                                    int countedVariableType = counted_var_info[2];
+
+                                    const vector<int> & counted_var_objects = mutexFDRSATVarsTime[key][val[grounding]][counted_var_info[1]];
+                                    int cntOfType = get_counted_of_type_var(solver, capsule, timestep, trltToGlobalIndex, countedVariableType, parameterVarsTime);
+                                    int equals_var = get_equals_var(solver, capsule, timestep, timestep+1, trltToGlobalIndex, key, counted_var_info[1], val[grounding], countedVars,
+                                        counted_var_objects, countedVariableType, parameterVarsTime);
+                                    negation.push_back(cntOfType);
+                                    negation.push_back(equals_var);
+                                }
+                                for(size_t p = 0 ; p < mutexFDRVars[key][val[grounding]][mutexFDRVars[key][val[grounding]].size()-1].size() ; p++){
+                                    if(mutexFDRVars[key][val[grounding]][mutexFDRVars[key][val[grounding]].size()-1][p] == predicate){
+                                        negation.push_back(mutexFDRSATVarsTime[key][val[grounding]][mutexFDRVars[key][val[grounding]].size()-1][p]);
+                                        break;
+                                    }
+                                }
+
+                                notAll(solver, negation);
+                            }
+                        }
+
+
                         while(all_facts[lowerIndexGroundedPredicate].first == effObjec.predicate_symbol){
 
                             std::vector<int> leftImplication;
@@ -1295,6 +1632,40 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
                     } else {
                         // TODO adding effects
                         //
+
+                        map<int, vector<vector<int>>> correspondingFAMs = idek[predicate][typesOfPredicate];
+                        for(auto const& [key, val] : correspondingFAMs){
+                            for(size_t grounding = 0 ; grounding < val.size() ; grounding++){
+                                vector<int> leftImplication;
+                                vector<int> rightImplication;
+                                leftImplication.push_back(actionVar);
+                                for(size_t freeVars = 0 ; freeVars < clearer[key][predicate]["free"].size() ; freeVars++){
+                                    int trltToGlobalIndex = translateEffectToGlobalArguments[clearer[key][predicate]["free"][freeVars][0]];
+                                    leftImplication.push_back(parameterVarsTime[trltToGlobalIndex][val[grounding][freeVars]]);
+                                }
+                                for(size_t countedVars = 0 ; countedVars < clearer[key][predicate]["counted"].size() ; countedVars++){
+                                    const vector<int> & counted_var_info = clearer[key][predicate]["counted"][countedVars];
+                                    int trltToGlobalIndex = translateEffectToGlobalArguments[counted_var_info[0]];
+                                    int countedVariableType = counted_var_info[2];
+
+                                    const vector<int> & counted_var_objects = mutexFDRSATVarsTime[key][val[grounding]][counted_var_info[1]];
+                                    int cntOfType = get_counted_of_type_var(solver, capsule, timestep, trltToGlobalIndex, countedVariableType, parameterVarsTime);
+                                    int equals_var = get_equals_var(solver, capsule, timestep, timestep+1, trltToGlobalIndex, key, counted_var_info[1], val[grounding], countedVars,
+                                        counted_var_objects, countedVariableType, parameterVarsTime);
+                                    leftImplication.push_back(cntOfType);
+                                    rightImplication.push_back(equals_var);
+                                }
+                                for(size_t p = 0 ; p < mutexFDRVars[key][val[grounding]][mutexFDRVars[key][val[grounding]].size()-1].size() ; p++){
+                                    if(mutexFDRVars[key][val[grounding]][mutexFDRVars[key][val[grounding]].size()-1][p] == predicate){
+                                        rightImplication.push_back(mutexFDRSATVarsTime[key][val[grounding]][mutexFDRVars[key][val[grounding]].size()-1][p]);
+                                        break;
+                                    }
+                                }
+
+                                for (const int & l : rightImplication)
+                                    andImplies(solver,leftImplication,l);
+                            }
+                        }
 
                         while(all_facts[lowerIndexGroundedPredicate].first == effObjec.predicate_symbol){
 
@@ -1399,6 +1770,7 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
             clauseNumber(oneAction);
 
             swap(previousTimeMutexPredicateVars,currentTimeMutexPredicateVars);
+            swap(mutexFDRSATVarsNextTime,mutexFDRSATVarsTime);
         }
 
         // TODO: assert that the goal is true. This should reference the previousTimeMutexPredicateVars

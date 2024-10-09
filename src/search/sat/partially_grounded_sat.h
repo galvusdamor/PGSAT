@@ -17,8 +17,18 @@ private:
     std::vector<std::pair<int, std::vector<int>>> all_facts;
     std::map<std::pair<int, std::vector<int>>,int> all_facts_index;
     std::vector<std::string> factToString;
+    std::map<int, std::map<int, std::map<std::string, std::vector<std::vector<int>>>>> clearer;
+    std::vector<std::map<std::vector<int>, std::vector<std::vector<int>>>> mutexFDRVars;
+    std::map<int, std::map<std::vector<int>, std::map<int, std::vector<std::vector<int>>>>> idek;
     void generatePredicateStrings();
 	std::vector<int> generateFactVars(sat_capsule & capsule, int timestep, std::vector<std::string>);
+    std::map<int, std::map<std::vector<int>, std::vector<std::vector<int>>>> generateFAMVars(void* solver, sat_capsule & capsule, int timestep);
+    
+    int get_equals_var(void* solver, sat_capsule & capsule, int time_action, int time_state, int action_argument_position,\
+        int FAM_group, int param_id, std::vector<int> free_variable_grounding, int counted_var,
+        const std::vector<int> & counted_var_objects, int counted_var_type, const std::vector<std::map<int,int>> & parameterVars);
+    int get_counted_of_type_var(void* solver, sat_capsule & capsule, int time_step, int action_argument_position, int type,
+        const std::vector<std::map<int,int>> & parameterVars);
 
     std::map<std::string,double> timings;
     std::clock_t _start;
