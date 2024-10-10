@@ -1177,6 +1177,40 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
 
 		// TODO: assert that the initial state is true.
         // one for every mutex should be true
+
+        for (size_t i = 0; i < task.initial_state.get_relations().size(); i++) {
+            auto rel = task.initial_state.get_relations()[i];
+            auto tuple = task.initial_state.get_tuples_of_relation(i);
+            for (vector<int> groundA: tuple) {
+                int pred = rel.predicate_symbol;
+                vector<int> satTuple;
+                vector<int> satTupleTypes;
+                for(int x : groundA){
+                    satTuple.push_back(pwlObjToSATObject[x]);
+                    satTupleTypes.push_back(types[pwlObjToSATObject[x]]);
+                }
+                if(all_facts_index[{pred, satTuple}].count(uncovered_facts)){
+                    actsInInitialState.insert(all_facts_index[{pred, satTuple}]);
+                }else{
+                    map<int, vector<vector<int>>> smth = idek[pred][satTupleTypes];
+                    for(auto const& [key, val] : smth){
+                        for(vector<int> v : val){
+                            mutexFDRSATVarsTime[key][v];
+                        }
+                    }
+                }
+
+            }
+        }
+        for(size_t fact = 0 ; fact < all_facts.size() ; fact++){
+            if(factsInInitialState.count(fact)){
+                //cout << fact << " " << previousTimeMutexPredicateVars[fact] << endl;
+                assertYes(solver,previousTimeMutexPredicateVars[fact]);
+            }else{
+                assertNot(solver,previousTimeMutexPredicateVars[fact]);
+            }
+        }
+
         set<int> factsInInitialState;
         for (size_t i = 0; i < task.initial_state.get_relations().size(); i++) {
             auto rel = task.initial_state.get_relations()[i];
