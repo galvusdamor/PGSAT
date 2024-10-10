@@ -16,6 +16,12 @@ class PartiallyGroundedSAT : public BaseSATEncoding{
 private:
     std::vector<std::pair<int, std::vector<int>>> all_facts;
     std::map<std::pair<int, std::vector<int>>,int> all_facts_index;
+    
+	std::vector<int> uncovered_facts;
+	std::unordered_set<int> uncovered_facts_set;
+	std::map<int, std::vector<std::pair<int,std::vector<int>>>> fact_to_mutexes_with_counted_info;
+	std::vector<std::pair<int, std::vector<int>>> fam_based_mutexes;
+
     std::vector<std::string> factToString;
     std::map<int, std::map<int, std::map<std::string, std::vector<std::vector<int>>>>> clearer;
     std::map<int,std::map<std::vector<int>, std::vector<std::vector<int>>>> mutexFDRVars;
