@@ -68,6 +68,7 @@ void andImplies(void* solver, int i, int j, int k);
 void andImplies(void* solver, int i, int j, int k, int l);
 void andImplies(void* solver, std::set<int> i, int j);
 void andImplies(void* solver, std::vector<int> i, int j);
+void andImplies(void* solver, std::vector<int> i, int j, int k); // i and j -> k
 void andImpliesNot(void* solver, std::vector<int> i, int j);
 void andImpliesNot(void* solver, std::set<int> i, int j);
 void andImpliesNot(void* solver, int i, int j, int k);
