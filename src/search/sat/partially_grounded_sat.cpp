@@ -1047,6 +1047,10 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task) :
 
     for(size_t i = 0 ; i < decreased_fact.size() ; i++){
         if(!decreased_fact[i]){
+			int pred = all_facts[i].first;
+			if (lower_predicate_index_in_uncovered.count(pred) == 0)
+				lower_predicate_index_in_uncovered[pred] = uncovered_facts.size();
+			fact_index_to_uncovered[i] = uncovered_facts.size();
             uncovered_facts.push_back(i);
 			uncovered_facts_set.insert(i);
         }
@@ -1092,11 +1096,10 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task) :
 
 vector<int> PartiallyGroundedSAT::generateFactVars(sat_capsule & capsule, int timestep, vector<string> factToString){
 	vector<int> mutexPredicateVarsTime;
-	for (size_t predicate = 0; predicate < all_facts.size(); predicate++){
-	    int grounded_mutex_predicate_var;
-	    grounded_mutex_predicate_var = capsule.new_variable();
+	for (size_t predicate = 0; predicate < uncovered_facts.size(); predicate++){
+	    int grounded_mutex_predicate_var = capsule.new_variable();
 	    mutexPredicateVarsTime.push_back(grounded_mutex_predicate_var);
-	    DEBUG(capsule.registerVariable(grounded_mutex_predicate_var,"predicate@" + to_string(timestep) + "-" + factToString[predicate]) );
+	    DEBUG(capsule.registerVariable(grounded_mutex_predicate_var,"fact@" + to_string(timestep) + "-" + factToString[predicate]) );
 	}
 
 	return mutexPredicateVarsTime;
@@ -1240,39 +1243,11 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
         for(const int & fact : uncovered_facts){
             if(factsInInitialState.count(fact)){
                 //cout << fact << " " << previousTimeMutexPredicateVars[fact] << endl;
-                assertYes(solver,previousTimeMutexPredicateVars[fact]);
+                assertYes(solver,previousTimeMutexPredicateVars[fact_index_to_uncovered[fact]]);
             }else{
-                assertNot(solver,previousTimeMutexPredicateVars[fact]);
+                assertNot(solver,previousTimeMutexPredicateVars[fact_index_to_uncovered[fact]]);
             }
         }
-
-
-
-
-		//////////// all facts version
-
-		//factsInInitialState.clear();
-
-        //for (size_t i = 0; i < task.initial_state.get_relations().size(); i++) {
-        //    auto rel = task.initial_state.get_relations()[i];
-        //    auto tuple = task.initial_state.get_tuples_of_relation(i);
-        //    for (vector<int> groundA: tuple) {
-        //        int pred = rel.predicate_symbol;
-        //        vector<int> satTuple;
-        //        for(int x : groundA){
-        //            satTuple.push_back(pwlObjToSATObject[x]);
-        //        }
-        //        factsInInitialState.insert(all_facts_index[{pred, satTuple}]);
-        //    }
-        //}
-        //for(size_t fact = 0 ; fact < all_facts.size() ; fact++){
-        //    if(factsInInitialState.count(fact)){
-        //        //cout << fact << " " << previousTimeMutexPredicateVars[fact] << endl;
-        //        assertYes(solver,previousTimeMutexPredicateVars[fact]);
-        //    }else{
-        //        assertNot(solver,previousTimeMutexPredicateVars[fact]);
-        //    }
-        //}
 
         // nullary predicates initial state
         std::unordered_map<int,int> lastNullary;
@@ -1578,22 +1553,18 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
                         translatePreconditionToGlobalArguments.push_back(actionSchemaToGlobalArguments);
                     }
 
-                    std::vector<int> lowerLimitPredicate;
                     std::vector<int> typesOfPredicate;
 
                     for(size_t argument = 0 ; argument < precObjec.arguments.size() ; argument++){
                         if(translatePreconditionToGlobalArguments[argument] == -1){
-                            lowerLimitPredicate.push_back(pwlObjToSATObject[precObjec.arguments[argument].index]);
                             continue;
                         }
                         int type = typeOfArgument[translatePreconditionToGlobalArguments[argument]];
                         int lower = lowerTypeindex[type];
                         typesOfPredicate.push_back(type);
-                        lowerLimitPredicate.push_back(lower);
                     }
 
                     
-                    int lowerIndexGroundedPredicate = all_facts_index[{precObjec.predicate_symbol, lowerLimitPredicate}];
 
                     map<int, vector<vector<int>>> correspondingFAMs = idek[predicate][typesOfPredicate];
                     for(auto const& [key, val] : correspondingFAMs){
@@ -1633,18 +1604,21 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
                         }
                     }
                     
-					while(all_facts.size() > lowerIndexGroundedPredicate && all_facts[lowerIndexGroundedPredicate].first == predicate){
+                    
+					int lowerIndexGroundedPredicate = lower_predicate_index_in_uncovered[precObjec.predicate_symbol];
+					while(uncovered_facts.size() > lowerIndexGroundedPredicate && all_facts[uncovered_facts[lowerIndexGroundedPredicate]].first == predicate){
                         std::vector<int> leftImplication;
                         bool invalidSupport =false;
                         leftImplication.push_back(actionVarsTime[action]);
-                        for(size_t grounding = 0 ; grounding < all_facts[lowerIndexGroundedPredicate].second.size() ; grounding++){
+						int fact_index = uncovered_facts[lowerIndexGroundedPredicate]; 
+                        for(size_t grounding = 0 ; grounding < all_facts[fact_index].second.size() ; grounding++){
                             if(translatePreconditionToGlobalArguments[grounding] == -1){
-                                if (all_facts[lowerIndexGroundedPredicate].second[grounding] == pwlObjToSATObject[precObjec.arguments[grounding].index]) continue;
+                                if (all_facts[fact_index].second[grounding] == pwlObjToSATObject[precObjec.arguments[grounding].index]) continue;
                                 invalidSupport = true;
                                 break;
                             }
-                            if (parameterVarsTime[translatePreconditionToGlobalArguments[grounding]].count(all_facts[lowerIndexGroundedPredicate].second[grounding])){
-                                leftImplication.push_back(parameterVarsTime[translatePreconditionToGlobalArguments[grounding]][all_facts[lowerIndexGroundedPredicate].second[grounding]]);
+                            if (parameterVarsTime[translatePreconditionToGlobalArguments[grounding]].count(all_facts[fact_index].second[grounding])){
+                                leftImplication.push_back(parameterVarsTime[translatePreconditionToGlobalArguments[grounding]][all_facts[fact_index].second[grounding]]);
                             }else{
                                 invalidSupport = true;
                                 break;
@@ -1659,7 +1633,6 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
                     }
 
                     translatePreconditionToGlobalArguments.clear();
-                    lowerLimitPredicate.clear();
              	}
                 clauseNumber(preconditionImplications);
 
@@ -1681,25 +1654,19 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
                         translateEffectToGlobalArguments.push_back(actionSchemaToGlobalArguments);
                     }
 
-                    std::vector<int> lowerLimitPredicate;
                     std::vector<int> typesOfPredicate;
-
                     for(size_t argument = 0 ; argument < effObjec.arguments.size() ; argument++){
                         if(translateEffectToGlobalArguments[argument] == -1){
-                            lowerLimitPredicate.push_back(pwlObjToSATObject[effObjec.arguments[argument].index]);
                             continue;
                         }
                         int type = typeOfArgument[translateEffectToGlobalArguments[argument]];
                         int lower = lowerTypeindex[type];
                         typesOfPredicate.push_back(type);
-                        lowerLimitPredicate.push_back(lower);
                     }
-
-                    int lowerIndexGroundedPredicate = all_facts_index[{effObjec.predicate_symbol, lowerLimitPredicate}];
+					int lowerIndexGroundedPredicate = lower_predicate_index_in_uncovered[effObjec.predicate_symbol];
 
                     if (effObjec.negated){
-                        // TODO deleting effect
-
+                        // deleting effect
                         map<int, vector<vector<int>>> correspondingFAMs = idek[predicate][typesOfPredicate];
                         for(auto const& [key, val] : correspondingFAMs){
                             for(size_t grounding = 0 ; grounding < val.size() ; grounding++){
@@ -1733,27 +1700,28 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
                         }
 
 
-                        while(all_facts.size() > lowerIndexGroundedPredicate && all_facts[lowerIndexGroundedPredicate].first == effObjec.predicate_symbol){
+                        while(uncovered_facts.size() > lowerIndexGroundedPredicate && all_facts[uncovered_facts[lowerIndexGroundedPredicate]].first == effObjec.predicate_symbol){
 
                             std::vector<int> leftImplication;
                             bool invalidSupport =false;
                             int causeVariable = capsule.new_variable();
-                            DEBUG(capsule.registerVariable(causeVariable, "deleter@" + to_string(timestep) + "-" + factToString[lowerIndexGroundedPredicate]));
+                            DEBUG(capsule.registerVariable(causeVariable, "deleter@" + to_string(timestep) + "-" + factToString[uncovered_facts[lowerIndexGroundedPredicate]]));
 
                             deleters[lowerIndexGroundedPredicate].push_back(causeVariable);
                             implies(solver,causeVariable,actionVarsTime[action]);
                             clauseNumber(causeVariablesImplications);
 
                             leftImplication.push_back(actionVarsTime[action]);
-                            for(size_t grounding = 0 ; grounding < all_facts[lowerIndexGroundedPredicate].second.size() ; grounding++){
+							int fact_index = uncovered_facts[lowerIndexGroundedPredicate];
+                            for(size_t grounding = 0 ; grounding < all_facts[fact_index].second.size() ; grounding++){
                                 if(translateEffectToGlobalArguments[grounding] == -1){
-                                    if (all_facts[lowerIndexGroundedPredicate].second[grounding] == pwlObjToSATObject[effObjec.arguments[grounding].index]) continue;
+                                    if (all_facts[fact_index].second[grounding] == pwlObjToSATObject[effObjec.arguments[grounding].index]) continue;
                                     invalidSupport = true;
                                     break;
                                 }
-                                if (parameterVarsTime[translateEffectToGlobalArguments[grounding]].count(all_facts[lowerIndexGroundedPredicate].second[grounding])){
-                                    leftImplication.push_back(parameterVarsTime[translateEffectToGlobalArguments[grounding]][all_facts[lowerIndexGroundedPredicate].second[grounding]]);
-                                        implies(solver,causeVariable,parameterVarsTime[translateEffectToGlobalArguments[grounding]][all_facts[lowerIndexGroundedPredicate].second[grounding]]);
+                                if (parameterVarsTime[translateEffectToGlobalArguments[grounding]].count(all_facts[fact_index].second[grounding])){
+                                    leftImplication.push_back(parameterVarsTime[translateEffectToGlobalArguments[grounding]][all_facts[fact_index].second[grounding]]);
+                                        implies(solver,causeVariable,parameterVarsTime[translateEffectToGlobalArguments[grounding]][all_facts[fact_index].second[grounding]]);
                                         clauseNumber(causeVariablesImplications);
                                 }else{
                                     invalidSupport = true;
@@ -1835,26 +1803,27 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
                             }
                         }
 
-                        while(all_facts.size() > lowerIndexGroundedPredicate && all_facts[lowerIndexGroundedPredicate].first == effObjec.predicate_symbol){
+                        while(uncovered_facts.size() > lowerIndexGroundedPredicate && all_facts[uncovered_facts[lowerIndexGroundedPredicate]].first == effObjec.predicate_symbol){
 
                             std::vector<int> leftImplication;
                             bool invalidSupport =false;
                             int causeVariable = capsule.new_variable();
-                            DEBUG(capsule.registerVariable(causeVariable, "adder@" + to_string(timestep) + "-" + factToString[lowerIndexGroundedPredicate]));
+                            DEBUG(capsule.registerVariable(causeVariable, "adder@" + to_string(timestep) + "-" + factToString[uncovered_facts[lowerIndexGroundedPredicate]]));
 
                             adders[lowerIndexGroundedPredicate].push_back(causeVariable);
                             implies(solver,causeVariable,actionVarsTime[action]);
 
                             leftImplication.push_back(actionVarsTime[action]);
-                            for(size_t grounding = 0 ; grounding < all_facts[lowerIndexGroundedPredicate].second.size() ; grounding++){
+							int fact_index = uncovered_facts[lowerIndexGroundedPredicate];
+                            for(size_t grounding = 0 ; grounding < all_facts[fact_index].second.size() ; grounding++){
                                if(translateEffectToGlobalArguments[grounding] == -1){
-                                    if (all_facts[lowerIndexGroundedPredicate].second[grounding] == pwlObjToSATObject[effObjec.arguments[grounding].index]) continue;
+                                    if (all_facts[fact_index].second[grounding] == pwlObjToSATObject[effObjec.arguments[grounding].index]) continue;
                                     invalidSupport = true;
                                     break;
                                 }
-                                if (parameterVarsTime[translateEffectToGlobalArguments[grounding]].count(all_facts[lowerIndexGroundedPredicate].second[grounding])){
-                                    leftImplication.push_back(parameterVarsTime[translateEffectToGlobalArguments[grounding]][all_facts[lowerIndexGroundedPredicate].second[grounding]]);
-                                    implies(solver,causeVariable,parameterVarsTime[translateEffectToGlobalArguments[grounding]][all_facts[lowerIndexGroundedPredicate].second[grounding]]);
+                                if (parameterVarsTime[translateEffectToGlobalArguments[grounding]].count(all_facts[fact_index].second[grounding])){
+                                    leftImplication.push_back(parameterVarsTime[translateEffectToGlobalArguments[grounding]][all_facts[fact_index].second[grounding]]);
+                                    implies(solver,causeVariable,parameterVarsTime[translateEffectToGlobalArguments[grounding]][all_facts[fact_index].second[grounding]]);
                                     clauseNumber(causeVariablesImplications);
                                 }else{
                                     invalidSupport = true;
@@ -1881,8 +1850,6 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
                     }
 
                     translateEffectToGlobalArguments.clear();
-                    lowerLimitPredicate.clear();
-
                 }
 
                 clauseNumber(effectImplications);
@@ -1909,9 +1876,9 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
             // c -> parameters
             // f@t and -f@t+q -> c_1 v c_2 v c_3 v ...
 
-            for(size_t fact = 0 ; fact < previousTimeMutexPredicateVars.size() ; fact++){
-                impliesPosAndNegImpliesOr(solver, previousTimeMutexPredicateVars[fact], currentTimeMutexPredicateVars[fact], deleters[fact]);
-                impliesPosAndNegImpliesOr(solver, currentTimeMutexPredicateVars[fact], previousTimeMutexPredicateVars[fact], adders[fact]);
+            for(size_t ufact = 0 ; ufact < previousTimeMutexPredicateVars.size() ; ufact++){
+                impliesPosAndNegImpliesOr(solver, previousTimeMutexPredicateVars[ufact], currentTimeMutexPredicateVars[ufact], deleters[ufact]);
+                impliesPosAndNegImpliesOr(solver, currentTimeMutexPredicateVars[ufact], previousTimeMutexPredicateVars[ufact], adders[ufact]);
             }
             
 		
@@ -1957,7 +1924,7 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
             swap(mutexFDRSATVarsNextTime,mutexFDRSATVarsTime);
         }
 
-        // TODO: assert that the goal is true. This should reference the previousTimeMutexPredicateVars
+        // assert that the goal is true. This should reference the previousTimeMutexPredicateVars
         vector<int> factsInGoalState;
         for (size_t goal = 0; goal < task.goal.goal.size(); goal++){
             const AtomicGoal & goalAtom = task.goal.goal[goal];
@@ -2002,7 +1969,7 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
         }
 
 	     for(const int & fact : factsInGoalState)
-			 assertYes(solver,previousTimeMutexPredicateVars[fact]);
+			 assertYes(solver,previousTimeMutexPredicateVars[fact_index_to_uncovered[fact]]);
 
         // nullary goals
         for (int g : task.goal.positive_nullary_goals)

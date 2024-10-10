@@ -19,6 +19,8 @@ private:
     
 	std::vector<int> uncovered_facts;
 	std::unordered_set<int> uncovered_facts_set;
+	std::unordered_map<int,int> fact_index_to_uncovered;
+	std::unordered_map<int,int> lower_predicate_index_in_uncovered;
 	std::map<int, std::vector<std::pair<int,std::vector<int>>>> fact_to_mutexes_with_counted_info;
 	std::vector<std::pair<int, std::vector<int>>> fam_based_mutexes;
 
