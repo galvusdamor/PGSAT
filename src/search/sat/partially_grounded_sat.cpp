@@ -1191,7 +1191,6 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
 	    );
 
 
-		// TODO: assert that the initial state is true.
         // one for every mutex should be true
         set<int> factsInInitialState;
         for (size_t i = 0; i < task.initial_state.get_relations().size(); i++) {
@@ -1250,30 +1249,30 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
 
 
 
-		////////// all facts version
+		//////////// all facts version
 
-		factsInInitialState.clear();
+		//factsInInitialState.clear();
 
-        for (size_t i = 0; i < task.initial_state.get_relations().size(); i++) {
-            auto rel = task.initial_state.get_relations()[i];
-            auto tuple = task.initial_state.get_tuples_of_relation(i);
-            for (vector<int> groundA: tuple) {
-                int pred = rel.predicate_symbol;
-                vector<int> satTuple;
-                for(int x : groundA){
-                    satTuple.push_back(pwlObjToSATObject[x]);
-                }
-                factsInInitialState.insert(all_facts_index[{pred, satTuple}]);
-            }
-        }
-        for(size_t fact = 0 ; fact < all_facts.size() ; fact++){
-            if(factsInInitialState.count(fact)){
-                //cout << fact << " " << previousTimeMutexPredicateVars[fact] << endl;
-                assertYes(solver,previousTimeMutexPredicateVars[fact]);
-            }else{
-                assertNot(solver,previousTimeMutexPredicateVars[fact]);
-            }
-        }
+        //for (size_t i = 0; i < task.initial_state.get_relations().size(); i++) {
+        //    auto rel = task.initial_state.get_relations()[i];
+        //    auto tuple = task.initial_state.get_tuples_of_relation(i);
+        //    for (vector<int> groundA: tuple) {
+        //        int pred = rel.predicate_symbol;
+        //        vector<int> satTuple;
+        //        for(int x : groundA){
+        //            satTuple.push_back(pwlObjToSATObject[x]);
+        //        }
+        //        factsInInitialState.insert(all_facts_index[{pred, satTuple}]);
+        //    }
+        //}
+        //for(size_t fact = 0 ; fact < all_facts.size() ; fact++){
+        //    if(factsInInitialState.count(fact)){
+        //        //cout << fact << " " << previousTimeMutexPredicateVars[fact] << endl;
+        //        assertYes(solver,previousTimeMutexPredicateVars[fact]);
+        //    }else{
+        //        assertNot(solver,previousTimeMutexPredicateVars[fact]);
+        //    }
+        //}
 
         // nullary predicates initial state
         std::unordered_map<int,int> lastNullary;
@@ -1969,20 +1968,41 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
             for(size_t arg = 0; arg < goalAtom.args.size() ; arg++){
                 translatedArgs.push_back(pwlObjToSATObject[goalAtom.args[arg]]);
             }
-            for(size_t fact = 0 ; fact < all_facts.size() ; fact++){
-                if(all_facts[fact].first == pred && all_facts[fact].second == translatedArgs){
-                    factsInGoalState.push_back(fact);
-                    break;
-                }
-            }
-            
-        }
-        for(size_t fact = 0 ; fact < all_facts.size() ; fact++){
-            if(std::find(factsInGoalState.begin(), factsInGoalState.end(), fact) != factsInGoalState.end()){
-                assertYes(solver,previousTimeMutexPredicateVars[fact]);
+			int factIndex = all_facts_index[{pred, translatedArgs}];
+            if(uncovered_facts_set.count(factIndex)){
+                factsInGoalState.push_back(factIndex);
+            }else{
+				for (const auto & [grounded_fam_index, counted_variables_values] : fact_to_mutexes_with_counted_info[factIndex]){
+					const auto & [fam, free_grounding] = fam_based_mutexes[grounded_fam_index];
+
+					if (mutexFDRSATVarsTime.count(fam) == 0) continue;
+					if (mutexFDRSATVarsTime[fam].count(free_grounding) == 0) continue;
+
+					const vector<vector<int>> & counted_sat_variables = mutexFDRSATVarsTime[fam][free_grounding];
+
+					for (size_t var = 0; var < counted_variables_values.size(); var++){
+						if (counted_variables_values[var] == -1) continue; // no restriction on this value
+
+						int base_object = mutexFDRVars[fam][free_grounding][var][0];
+						int object_offset = counted_variables_values[var] - base_object;
+
+						int myObjectVariable = counted_sat_variables[var][object_offset];
+
+						assertYes(solver,myObjectVariable);
+					}
+
+					for(size_t p = 0 ; p < mutexFDRVars[fam][free_grounding].back().size() ; p++){
+                    	if(mutexFDRVars[fam][free_grounding].back()[p] == pred){
+							assertYes(solver,mutexFDRSATVarsTime[fam][free_grounding].back()[p]);
+							break;
+                        }
+                   }
+				}
             }
         }
 
+	     for(const int & fact : factsInGoalState)
+			 assertYes(solver,previousTimeMutexPredicateVars[fact]);
 
         // nullary goals
         for (int g : task.goal.positive_nullary_goals)
