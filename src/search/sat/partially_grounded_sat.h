@@ -18,7 +18,7 @@ private:
     std::map<std::pair<int, std::vector<int>>,int> all_facts_index;
     std::vector<std::string> factToString;
     std::map<int, std::map<int, std::map<std::string, std::vector<std::vector<int>>>>> clearer;
-    std::vector<std::map<std::vector<int>, std::vector<std::vector<int>>>> mutexFDRVars;
+    std::map<int,std::map<std::vector<int>, std::vector<std::vector<int>>>> mutexFDRVars;
     std::map<int, std::map<std::vector<int>, std::map<int, std::vector<std::vector<int>>>>> idek;
     void generatePredicateStrings();
 	std::vector<int> generateFactVars(sat_capsule & capsule, int timestep, std::vector<std::string>);
@@ -30,7 +30,9 @@ private:
     int get_counted_of_type_var(void* solver, sat_capsule & capsule, int time_step, int action_argument_position, int type,
         const std::vector<std::map<int,int>> & parameterVars);
 
-    std::map<std::string,double> timings;
+	int get_different_var(void* solver, sat_capsule & capsule, const std::vector<int> & previous, const std::vector<int> & next);
+    
+	std::map<std::string,double> timings;
     std::clock_t _start;
 public:
     PartiallyGroundedSAT(const Task& task);
