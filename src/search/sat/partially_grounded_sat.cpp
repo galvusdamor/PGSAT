@@ -1630,7 +1630,7 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
                                     int trltToGlobalIndex = translateEffectToGlobalArguments[counted_var_info[0]];
                                     int countedVariableType = counted_var_info[2];
 
-                                    const vector<int> & counted_var_objects = mutexFDRSATVarsTime[key][val[grounding]][counted_var_info[1]];
+                                    const vector<int> & counted_var_objects = mutexFDRSATVarsNextTime[key][val[grounding]][counted_var_info[1]];
                                     int cntOfType = get_counted_of_type_var(solver, capsule, timestep, trltToGlobalIndex, countedVariableType, parameterVarsTime);
                                     int equals_var = get_equals_var(solver, capsule, timestep, timestep+1, trltToGlobalIndex, key, counted_var_info[1], val[grounding], countedVars,
                                         counted_var_objects, countedVariableType, parameterVarsTime);
@@ -1639,7 +1639,7 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
                                 }
                                 for(size_t p = 0 ; p < mutexFDRVars[key][val[grounding]][mutexFDRVars[key][val[grounding]].size()-1].size() ; p++){
                                     if(mutexFDRVars[key][val[grounding]][mutexFDRVars[key][val[grounding]].size()-1][p] == predicate){
-                                        negation.push_back(mutexFDRSATVarsTime[key][val[grounding]][mutexFDRVars[key][val[grounding]].size()-1][p]);
+                                        negation.push_back(mutexFDRSATVarsNextTime[key][val[grounding]][mutexFDRVars[key][val[grounding]].size()-1][p]);
                                         break;
                                     }
                                 }
@@ -1708,7 +1708,7 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
                                     int trltToGlobalIndex = translateEffectToGlobalArguments[counted_var_info[0]];
                                     int countedVariableType = counted_var_info[2];
 
-                                    const vector<int> & counted_var_objects = mutexFDRSATVarsTime[key][val[grounding]][counted_var_info[1]];
+                                    const vector<int> & counted_var_objects = mutexFDRSATVarsNextTime[key][val[grounding]][counted_var_info[1]];
                                     int cntOfType = get_counted_of_type_var(solver, capsule, timestep, trltToGlobalIndex, countedVariableType, parameterVarsTime);
                                     int equals_var = get_equals_var(solver, capsule, timestep, timestep+1, trltToGlobalIndex, key, counted_var_info[1], val[grounding], countedVars,
                                         counted_var_objects, countedVariableType, parameterVarsTime);
@@ -1724,7 +1724,7 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
                                 }
                                 for(size_t p = 0 ; p < mutexFDRVars[key][val[grounding]][mutexFDRVars[key][val[grounding]].size()-1].size() ; p++){
                                     if(mutexFDRVars[key][val[grounding]][mutexFDRVars[key][val[grounding]].size()-1][p] == predicate){
-                                        rightImplication.push_back(mutexFDRSATVarsTime[key][val[grounding]][mutexFDRVars[key][val[grounding]].size()-1][p]);
+                                        rightImplication.push_back(mutexFDRSATVarsNextTime[key][val[grounding]][mutexFDRVars[key][val[grounding]].size()-1][p]);
                                 
 										int causeVariable = capsule.new_variable();
 										// TODO Add good debugging name
