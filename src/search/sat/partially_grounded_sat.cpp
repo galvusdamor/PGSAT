@@ -290,7 +290,7 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task) :
 	cout << "Compiled without CPDDL support" << endl;
    	exit_with(utils::ExitCode::SEARCH_UNSUPPORTED);
 #endif
-	cout << "Extracting FAM groups using [Fiser, AAAI 2020] ...";
+	cout << "Extracting FAM groups using [Fiser, AAAI 2020] ..." << endl;
 
 	pddl_t * pddl = new pddl_t;
     bzero(pddl,sizeof(pddl_t));
@@ -803,7 +803,6 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task) :
                                 	add = false;
                                		break;
 	                            } else {
-									cout << "!!" << param_id << " " << highestCountedVars[mutex.first] << endl;
 									counted_info[param_id] = fact.second[k];
 								}
 							}
@@ -1150,6 +1149,8 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
 
     for (int timesteps = lowerLength; timesteps <= upperLength; timesteps++){
         map<string,int> clauseCounter;
+		equals_var_map.clear();
+		countedOfType.clear();
 
         void* solver = ipasir_init();
         reset_number_of_clauses();
@@ -1582,9 +1583,9 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
                                 int countedVariableType = counted_var_info[2];
 
                                 const vector<int> & counted_var_objects = mutexFDRSATVarsTime[key][val[grounding]][counted_var_info[1]];
-								cout << "countedVariableType " << key;
-							   	for (int x : val[grounding]) cout << " " << x;
-								cout << " -> " << " " << countedVariableType << " "  << mutexFDRSATVarsTime[key][val[grounding]].size() << " " << counted_var_info[1] << endl;
+								//cout << "countedVariableType " << key;
+							   	//for (int x : val[grounding]) cout << " " << x;
+								//cout << " -> " << " " << countedVariableType << " "  << mutexFDRSATVarsTime[key][val[grounding]].size() << " " << counted_var_info[1] << endl;
 								assert(counted_var_objects.size() == upperTypeindex[countedVariableType] - lowerTypeindex[countedVariableType] + 1);
                                 int cntOfType = get_counted_of_type_var(solver, capsule, timestep, trltToGlobalIndex, countedVariableType, parameterVarsTime);
                                 int equals_var = get_equals_var(solver, capsule, timestep, timestep, trltToGlobalIndex, key, counted_var_info[1], val[grounding], countedVars,
