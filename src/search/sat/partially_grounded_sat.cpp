@@ -1096,7 +1096,20 @@ map<int, map<vector<int>, vector<vector<int>>>> PartiallyGroundedSAT::generateFA
                 for(size_t objs = 0 ; objs < mutexFDRVars[FAM][key][num_vec].size() ; objs++){
                     int groundedCountedObjectVar = capsule.new_variable();
                     mutexFDRSATVarsTime[FAM][key][num_vec].push_back(groundedCountedObjectVar);
-                    //ADD DEBUG OUTPUT
+	    			DEBUG(
+						string name = "";
+						for (int x : key) name += " " + task.objects[satObjectToPWLObject[x]].getName();
+	
+						string value = "";
+						int int_obj = mutexFDRVars[FAM][key][num_vec][objs];
+						if (num_vec + 1 == mutexFDRVars[FAM][key].size()){
+							if (int_obj == -1) value = "-1";
+							else value = task.predicates[int_obj].getName();
+						} else {
+							value = task.objects[satObjectToPWLObject[int_obj]].getName();
+						}
+						capsule.registerVariable(groundedCountedObjectVar,"fam " + to_string(FAM) + " - " + name + " var " + to_string(num_vec) + " = " + value);
+					);
                 }
                 atMostOne(solver, capsule, mutexFDRSATVarsTime[FAM][key][num_vec]);
             }
