@@ -37,6 +37,9 @@ private:
         const std::vector<int> & counted_var_objects, int counted_var_type, const std::vector<std::map<int,int>> & parameterVars);
     int get_counted_of_type_var(void* solver, sat_capsule & capsule, int time_step, int action_argument_position, int type,
         const std::vector<std::map<int,int>> & parameterVars);
+	std::vector<int> get_vars_for_const(int time_state, int action_argument_position, int object, const std::vector<std::map<int,int>> & parameterVars);
+	std::vector<int> get_counted_vars_for_const(int object, const std::vector<int> & counted_var_objects, int counted_var_type);
+
 
 	int get_different_var(void* solver, sat_capsule & capsule, const std::vector<int> & previous, const std::vector<int> & next);
     
