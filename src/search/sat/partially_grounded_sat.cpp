@@ -570,7 +570,7 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task) :
     
     clearer.clear();//{FAM -> {predicates -> [freeOrCounted][index, param_id, type]}}
     set<int> predicatesInFAM;
-    for (int i = 0; i < lifted_mgroups.mgroup_size; i++){
+    for (int i = 0, seqIndex = 0; i < lifted_mgroups.mgroup_size; i++){
         if (pruned[i]) continue;
         for (int j = 0; j < (lifted_mgroups.mgroup + i)->cond.size; j++){
             const pddl_fm_atom_t *atom = pddlFmToAtomConst((lifted_mgroups.mgroup + i)->cond.fm[j]);
@@ -588,9 +588,10 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task) :
                     }
                 }
             }
-            clearer[i][CPDDLPredicatesToPWLPredicates[atom->pred]] = aux;
+            clearer[seqIndex][CPDDLPredicatesToPWLPredicates[atom->pred]] = aux;
             predicatesInFAM.insert(CPDDLPredicatesToPWLPredicates[atom->pred]);
         }
+        seqIndex++;
     }
 
     DEBUG(
@@ -609,8 +610,8 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task) :
     );
 
 
-    vector<set<pair<int, int>>> mutex_fixed_variable(lifted_mgroups.mgroup_size);
-    vector<map<int, set<pair<int, int>>>> mutex_counted_variable(lifted_mgroups.mgroup_size);
+    vector<set<pair<int, int>>> mutex_fixed_variable;
+    vector<map<int, set<pair<int, int>>>> mutex_counted_variable;
     for (int i = 0; i < lifted_mgroups.mgroup_size; i++){
         if (pruned[i]) continue;
         set<pair<int, int>> mutex_fixed_variable_aux;
@@ -630,11 +631,11 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task) :
                 }
             }
         }
-        mutex_fixed_variable[i] = mutex_fixed_variable_aux;
-        mutex_counted_variable[i] = mutex_counted_variable_aux;
+        mutex_fixed_variable.push_back(mutex_fixed_variable_aux);
+        mutex_counted_variable.push_back(mutex_counted_variable_aux);
     }
 
-    vector<int> highestCountedVars(lifted_mgroups.mgroup_size, 0);
+    vector<int> highestCountedVars(mutex_fixed_variable.size(), 0);
     for(size_t FAM = 0 ; FAM < highestCountedVars.size() ; FAM++){
         for (auto const& [key, val] : mutex_counted_variable[FAM]){
             for(auto p : val){
@@ -1493,6 +1494,7 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
                     } 
                 }
             }
+            atLeastOne(solver, capsule, actionVarsTime);
 
             actionVars.push_back(actionVarsTime);
 
@@ -1592,8 +1594,10 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
                                 leftImplication.push_back(cntOfType);
                                 rightImplication.push_back(equals_var);
                             }
-                            for(size_t p = 0 ; p < mutexFDRVars[key][val[grounding]][mutexFDRVars[key][val[grounding]].size()-1].size() ; p++){
-                                if(mutexFDRVars[key][val[grounding]][mutexFDRVars[key][val[grounding]].size()-1][p] == predicate){
+                            //cout << "Info " << grounding << " " << val.size() << endl;
+                            //cout << "k " << key << " " << mutexFDRVars[key][val[grounding]].size() << endl;
+                            for(size_t p = 0 ; p < mutexFDRVars[key][val[grounding]].back().size() ; p++){
+                                if(mutexFDRVars[key][val[grounding]].back()[p] == predicate){
                                     rightImplication.push_back(mutexFDRSATVarsTime[key][val[grounding]][mutexFDRVars[key][val[grounding]].size()-1][p]);
                                     break;
                                 }
@@ -1672,10 +1676,18 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
                         for(auto const& [key, val] : correspondingFAMs){
                             for(size_t grounding = 0 ; grounding < val.size() ; grounding++){
                                 vector<int> negation;
+                                vector<int> leftImplication;
+                                int causeVariable = capsule.new_variable();
+								// TODO Add good debugging name
+		                        DEBUG(capsule.registerVariable(causeVariable, "fdr-deleter@" + to_string(timestep) + "-FAM"));
+                                changers[key][val[grounding]][mutexFDRVars[key][val[grounding]].size()-1].push_back(causeVariable);
+                                
                                 negation.push_back(actionVar);
+                                leftImplication.push_back(actionVar);
                                 for(size_t freeVars = 0 ; freeVars < clearer[key][predicate]["free"].size() ; freeVars++){
                                     int trltToGlobalIndex = translateEffectToGlobalArguments[clearer[key][predicate]["free"][freeVars][0]];
                                     negation.push_back(parameterVarsTime[trltToGlobalIndex][val[grounding][freeVars]]);
+                                    leftImplication.push_back(parameterVarsTime[trltToGlobalIndex][val[grounding][freeVars]]);
                                 }
                                 for(size_t countedVars = 0 ; countedVars < clearer[key][predicate]["counted"].size() ; countedVars++){
                                     const vector<int> & counted_var_info = clearer[key][predicate]["counted"][countedVars];
@@ -1686,17 +1698,27 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
                                     int cntOfType = get_counted_of_type_var(solver, capsule, timestep, trltToGlobalIndex, countedVariableType, parameterVarsTime);
                                     int equals_var = get_equals_var(solver, capsule, timestep, timestep+1, trltToGlobalIndex, key, counted_var_info[1], val[grounding], countedVars,
                                         counted_var_objects, countedVariableType, parameterVarsTime);
+
+                                    const vector<int> & counted_var_objects_bef = mutexFDRSATVarsTime[key][val[grounding]][counted_var_info[1]];
+                                    int equals_var_bef = get_equals_var(solver, capsule, timestep, timestep, trltToGlobalIndex, key, counted_var_info[1], val[grounding], countedVars,
+                                        counted_var_objects_bef, countedVariableType, parameterVarsTime);
                                     negation.push_back(cntOfType);
+                                    leftImplication.push_back(cntOfType);
                                     negation.push_back(equals_var);
+                                    leftImplication.push_back(equals_var_bef);
                                 }
                                 for(size_t p = 0 ; p < mutexFDRVars[key][val[grounding]][mutexFDRVars[key][val[grounding]].size()-1].size() ; p++){
                                     if(mutexFDRVars[key][val[grounding]][mutexFDRVars[key][val[grounding]].size()-1][p] == predicate){
                                         negation.push_back(mutexFDRSATVarsNextTime[key][val[grounding]][mutexFDRVars[key][val[grounding]].size()-1][p]);
+                                        leftImplication.push_back(mutexFDRSATVarsTime[key][val[grounding]][mutexFDRVars[key][val[grounding]].size()-1][p]);
                                         break;
                                     }
                                 }
 
                                 notAll(solver, negation);
+
+                                for (const int & l : leftImplication)
+									implies(solver, causeVariable, l);
                             }
                         }
 
@@ -1925,9 +1947,11 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
             swap(mutexFDRSATVarsNextTime,mutexFDRSATVarsTime);
         }
 
+
         // assert that the goal is true. This should reference the previousTimeMutexPredicateVars
         vector<int> factsInGoalState;
         for (size_t goal = 0; goal < task.goal.goal.size(); goal++){
+            //continue;
             const AtomicGoal & goalAtom = task.goal.goal[goal];
             //pddl_fm_atom_t *a = pddlFmNewEmptyAtom(goalAtom.args.size());
             int pred = goalAtom.predicate;
@@ -1980,7 +2004,7 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
         clauseNumber(nullary);
 
 
-        //DEBUG(capsule.printVariables());
+        DEBUG(capsule.printVariables());
 
         int totalClauses = 0;
         for (auto [k,v] : clauseCounter){
