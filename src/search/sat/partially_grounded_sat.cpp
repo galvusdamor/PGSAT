@@ -80,7 +80,6 @@ void generateCombinations(const vector<vector<int>>& input, vector<int>& current
 // Wrapper function to call the recursive function and initiate the process
 vector<vector<int>> getCombinations(const vector<vector<int>>& input) {
     vector<vector<int>> result;
-    if (input.empty()) return result; // If input is empty, return an empty result
 
     vector<int> current(input.size()); // Placeholder for the current combination
     generateCombinations(input, current, 0, result); // Start recursive generation
@@ -1098,7 +1097,7 @@ vector<int> PartiallyGroundedSAT::generateFactVars(sat_capsule & capsule, int ti
 	for (size_t predicate = 0; predicate < uncovered_facts.size(); predicate++){
 	    int grounded_mutex_predicate_var = capsule.new_variable();
 	    mutexPredicateVarsTime.push_back(grounded_mutex_predicate_var);
-	    DEBUG(capsule.registerVariable(grounded_mutex_predicate_var,"fact@" + to_string(timestep) + "-" + factToString[predicate]) );
+	    DEBUG(capsule.registerVariable(grounded_mutex_predicate_var,"fact@" + to_string(timestep) + "-" + factToString[uncovered_facts[predicate]]) );
 	}
 
 	return mutexPredicateVarsTime;
@@ -1600,8 +1599,9 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
                                 }
                             }
 
-                            for (const int & l : rightImplication)
+                            for (const int & l : rightImplication){
                                 andImplies(solver,leftImplication,l);
+                            }
                         }
                     }
                     
