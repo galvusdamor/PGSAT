@@ -241,15 +241,21 @@ vector<int> PartiallyGroundedSAT::get_counted_vars_for_const(int object,
                     const vector<int> & counted_var_objects, int counted_var_type){
 	vector<int> variablesForThisObject;
 
+	assert(counted_var_type < task.type_names.size());
 	assert(object >= lowerTypeindex[counted_var_type]);
 	assert(object <= upperTypeindex[counted_var_type]);
-	variablesForThisObject.push_back(counted_var_objects[object - lowerTypeindex[counted_var_type]]);
+	int objectIndex = object - lowerTypeindex[counted_var_type];
+	assert(objectIndex >= 0);
+	assert(objectIndex < counted_var_objects.size());
+	variablesForThisObject.push_back(counted_var_objects[objectIndex]);
 	return variablesForThisObject;
 }
 
 vector<int> PartiallyGroundedSAT::get_vars_for_const(int time_state, int action_argument_position, int object, const vector<map<int,int>> & parameterVars){
 	vector<int> variablesForThisObject;
 
+	assert(action_argument_position >= 0);
+	assert(action_argument_position < parameterVars.size());
 	variablesForThisObject.push_back(parameterVars[action_argument_position].at(object));
 	return variablesForThisObject;
 }
@@ -635,11 +641,11 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task) :
     );
 
 
-    vector<set<pair<int, int>>> mutex_fixed_variable;
+    vector<map<int, int>> mutex_fixed_variable;
     vector<map<int, set<pair<int, int>>>> mutex_counted_variable;
     for (int i = 0; i < lifted_mgroups.mgroup_size; i++){
         if (pruned[i]) continue;
-        set<pair<int, int>> mutex_fixed_variable_aux;
+        map<int, int> mutex_fixed_variable_aux;
         map<int, set<pair<int, int>>> mutex_counted_variable_aux;
         for (int j = 0; j < (lifted_mgroups.mgroup + i)->cond.size; j++){
             const pddl_fm_atom_t *atom = pddlFmToAtomConst((lifted_mgroups.mgroup + i)->cond.fm[j]);
@@ -651,7 +657,7 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task) :
                     if (p->is_counted_var){
                         mutex_counted_variable_aux[CPDDLPredicatesToPWLPredicates[atom->pred]].insert({param_id , p->type-1});
                     }else{
-                        mutex_fixed_variable_aux.insert({param_id, p->type-1});
+                        mutex_fixed_variable_aux[param_id] = p->type-1;
                     }
                 }
             }
@@ -803,10 +809,10 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task) :
     for(size_t facts = 0 ; facts < all_facts.size() ; facts++){
         vector<int> mutexes_with_fact;
         pair<int, vector<int>> fact = all_facts[facts];
+		if (facts && facts % 100 == 0) cout << "Computing Fact " << facts << " of " << all_facts.size() << endl;
         for(size_t mutexes = 0 ; mutexes < fam_based_mutexes.size() ; mutexes++){
             pair<int, vector<int>> mutex = fam_based_mutexes[mutexes];
 
-			cout << "Checking Fact " << facts << " in mutex " << mutexes << endl;
             for (int j = 0; j < (lifted_mgroups.mgroup + FAM_group_indexes[mutex.first])->cond.size; j++){
                 const pddl_fm_atom_t *atom = pddlFmToAtomConst((lifted_mgroups.mgroup + FAM_group_indexes[mutex.first])->cond.fm[j]);
                 if(pddl->pred.pred[atom->pred].id == powerLiftedPredicatesToCPDDLPredicates[fact.first]){
@@ -950,7 +956,7 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task) :
 
      DEBUG(
         cout << "---------------FDR variables data structure : --------------------\n";
-        for(size_t FAM = 0 ; FAM < mutexFDRVars.size() ; FAM++){
+        for(auto const & [FAM, groundings] : mutexFDRVars){
             cout << "FAM number : " << FAM << endl;
             for(auto const& [key, val] : mutexFDRVars[FAM]){
                 cout << "\tGrounded Free Vars :";
@@ -989,37 +995,101 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task) :
                 	typesOfArguments.push_back(task.actions[actions].get_parameters()[indexInAction].type);
 				}
             }
+
             for (auto const& [FAM, mapOfPredicates] : clearer){
                 for (auto const& [pred, v] : mapOfPredicates){
                     if (pred == task.actions[actions].get_precondition()[preconditions].predicate_symbol){
                         vector<vector<int>> objectsToCombine;
-                        for(size_t freeVars = 0 ; freeVars < clearer[FAM][pred]["free"].size() ; freeVars++){
-                            int indexInPred = clearer[FAM][pred]["free"][freeVars][0];
-                            int famVariableType = clearer[FAM][pred]["free"][freeVars][2];
-                            vector<int> objects;
+
+						// go over the free variables *of the FAM group*
+						for (const auto & [freeVar, freeVarType] : mutex_fixed_variable[FAM]){
+                        	int thisFreeVarPosition = -1;
+							for(size_t freeVarInPred = 0 ; freeVarInPred < clearer[FAM][pred]["free"].size() ; freeVarInPred++){
+                            	int inPredVar = clearer[FAM][pred]["free"][freeVarInPred][1];
+								if (inPredVar == freeVar){
+									assert(thisFreeVarPosition == -1); // TODO hard assumption: free vars occur only once in literals
+									thisFreeVarPosition = freeVarInPred;
+								}
+							}
+							// can happen that the free variable is actually not mentioned in this predicate!
+							if (thisFreeVarPosition != -1){
+                            	int indexInPred = clearer[FAM][pred]["free"][thisFreeVarPosition][0];
+                            	int famVariableType = clearer[FAM][pred]["free"][thisFreeVarPosition][2];
+                            	vector<int> objects;
+
+								int argumentType = typesOfArguments[indexInPred];
+								if (argumentType < 0){
+									// it is actually a constant
+									int object = -argumentType - 1;
+									// check whether the object is inside of the type
+									if (lowerTypeindex[famVariableType] <= object && upperTypeindex[famVariableType] >= object)
+										objects.push_back(object);
+									// if not this will be empty, so we get no instantiation at all.
+								} else { 
+                            		int intersectionLower = max(lowerTypeindex[argumentType], lowerTypeindex[famVariableType]);
+                            		int intersectionUpper = min(upperTypeindex[argumentType], upperTypeindex[famVariableType]);
+
+                            		for(int lowerObj = intersectionLower ; lowerObj <= intersectionUpper ; lowerObj++){
+                            		    objects.push_back(lowerObj);
+                            		}
+								}
+                            	objectsToCombine.push_back(objects);
+							} else {
+								// if it is not mentioned then take all objects
+                            	vector<int> objects;
+                            	for(int lowerObj = lowerTypeindex[freeVarType] ; lowerObj <= upperTypeindex[freeVarType] ; lowerObj++)
+                            	    objects.push_back(lowerObj);
+                            	objectsToCombine.push_back(objects);
+							}
+                        }
+
+						// the counted variables and constants in the FAM group might not be compatible with the types of this precondition.
+						bool valid = true;
+					    for(size_t countedVars = 0 ; countedVars < clearer[FAM][pred]["counted"].size() ; countedVars++){
+                            const vector<int> & counted_var_info = clearer[FAM][pred]["counted"][countedVars];
+                            int indexInPred = counted_var_info[0];
+                            int countedVariableType = counted_var_info[2];
 
 							int argumentType = typesOfArguments[indexInPred];
 							if (argumentType < 0){
 								// it is actually a constant
 								int object = -argumentType - 1;
 								// check whether the object is inside of the type
-								if (lowerTypeindex[famVariableType] <= object && upperTypeindex[famVariableType] >= object)
-									objects.push_back(object);
-								// if not this will be empty, so we get no instantiation at all.
+								if (lowerTypeindex[countedVariableType] > object || upperTypeindex[countedVariableType] < object)
+									valid = false;
 							} else { 
-                            	int intersectionLower = max(lowerTypeindex[argumentType], lowerTypeindex[famVariableType]);
-                            	int intersectionUpper = min(upperTypeindex[argumentType], upperTypeindex[famVariableType]);
+                            	int intersectionLower = max(lowerTypeindex[argumentType], lowerTypeindex[countedVariableType]);
+                            	int intersectionUpper = min(upperTypeindex[argumentType], upperTypeindex[countedVariableType]);
 
-                            	for(int lowerObj = intersectionLower ; lowerObj <= intersectionUpper ; lowerObj++){
-                            	    objects.push_back(lowerObj);
-                            	}
+								// check whether the intersection type is empty
+								if (intersectionLower > intersectionUpper)
+									valid = false;
 							}
-                            objectsToCombine.push_back(objects);
-                        }
-						// TODO optimisation: also check the "counted" and "const" entries -- if they have an empty intersection with the argument type, this is not a good FAM group!
+						}
+                        for(size_t constants = 0 ; constants < clearer[FAM][pred]["const"].size() ; constants++){
+                            const vector<int> & const_info = clearer[FAM][pred]["const"][constants];
+                            int indexInPred = const_info[0];
+                            int objectFAM = const_info[1];
+
+							int argumentType = typesOfArguments[indexInPred];
+							if (argumentType < 0){
+								// it is actually a constant
+								int object = -argumentType - 1;
+								// check whether the object is the same
+								if (objectFAM != object)
+									valid = false;
+							} else { 
+                            	if (objectFAM < lowerTypeindex[argumentType] || objectFAM > upperTypeindex[argumentType])
+									valid = false;
+							}
+						}
+	
                         vector<vector<int>> freeGroundings = getCombinations(objectsToCombine);
-                        if (freeGroundings.size())
-                            idek[pred][typesOfArguments][FAM] = freeGroundings;
+						if (valid && freeGroundings.size()){
+   							for (const vector<int> & freeGrounding : freeGroundings)
+								if (mutexFDRVars[FAM].count(freeGrounding))
+									idek[pred][typesOfArguments][FAM].push_back(freeGrounding);
+						}
                     }
                 }
             }
@@ -1040,35 +1110,100 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task) :
 				}
             }
             for (auto const& [FAM, mapOfPredicates] : clearer){
+				if (mutexFDRVars.count(FAM) == 0) continue; // no grounding of this FAM group has been selected for the covering
                 for (auto const& [pred, v] : mapOfPredicates){
                     if (pred == task.actions[actions].get_effects()[effects].predicate_symbol){
                         vector<vector<int>> objectsToCombine;
-                        for(size_t freeVars = 0 ; freeVars < clearer[FAM][pred]["free"].size() ; freeVars++){
-                            int indexInPred = clearer[FAM][pred]["free"][freeVars][0];
-                            int famVariableType = clearer[FAM][pred]["free"][freeVars][2];
-                            vector<int> objects;
+                        
+						for (const auto & [freeVar, freeVarType] : mutex_fixed_variable[FAM]){
+                        	int thisFreeVarPosition = -1;
+							for(size_t freeVarInPred = 0 ; freeVarInPred < clearer[FAM][pred]["free"].size() ; freeVarInPred++){
+                            	int inPredVar = clearer[FAM][pred]["free"][freeVarInPred][1];
+								if (inPredVar == freeVar){
+									assert(thisFreeVarPosition == -1); // TODO hard assumption: free vars occur only once in literals
+									thisFreeVarPosition = freeVarInPred;
+								}
+							}
+							// can happen that the free variable is actually not mentioned in this predicate!
+							if (thisFreeVarPosition != -1){
+                            	int indexInPred = clearer[FAM][pred]["free"][thisFreeVarPosition][0];
+                            	int famVariableType = clearer[FAM][pred]["free"][thisFreeVarPosition][2];
+                            	vector<int> objects;
+
+								int argumentType = typesOfArguments[indexInPred];
+								if (argumentType < 0){
+									// it is actually a constant
+									int object = -argumentType - 1;
+									// check whether the object is inside of the type
+									if (lowerTypeindex[famVariableType] <= object && upperTypeindex[famVariableType] >= object)
+										objects.push_back(object);
+									// if not this will be empty, so we get no instantiation at all.
+								} else { 
+                            		int intersectionLower = max(lowerTypeindex[argumentType], lowerTypeindex[famVariableType]);
+                            		int intersectionUpper = min(upperTypeindex[argumentType], upperTypeindex[famVariableType]);
+
+                            		for(int lowerObj = intersectionLower ; lowerObj <= intersectionUpper ; lowerObj++){
+                            		    objects.push_back(lowerObj);
+                            		}
+								}
+                            	objectsToCombine.push_back(objects);
+							} else {
+								// if it is not mentioned then take all objects
+                            	vector<int> objects;
+                            	for(int lowerObj = lowerTypeindex[freeVarType] ; lowerObj <= upperTypeindex[freeVarType] ; lowerObj++)
+                            	    objects.push_back(lowerObj);
+                            	objectsToCombine.push_back(objects);
+							}
+                        }
+                        
+						// the counted variables and constants in the FAM group might not be compatible with the types of this precondition.
+						bool valid = true;
+					    for(size_t countedVars = 0 ; countedVars < clearer[FAM][pred]["counted"].size() ; countedVars++){
+                            const vector<int> & counted_var_info = clearer[FAM][pred]["counted"][countedVars];
+                            int indexInPred = counted_var_info[0];
+                            int countedVariableType = counted_var_info[2];
 
 							int argumentType = typesOfArguments[indexInPred];
 							if (argumentType < 0){
 								// it is actually a constant
 								int object = -argumentType - 1;
 								// check whether the object is inside of the type
-								if (lowerTypeindex[famVariableType] <= object && upperTypeindex[famVariableType] >= object)
-									objects.push_back(object);
-								// if not this will be empty, so we get no instantiation at all.
+								if (lowerTypeindex[countedVariableType] > object || upperTypeindex[countedVariableType] < object)
+									valid = false;
 							} else { 
-                            	int intersectionLower = max(lowerTypeindex[argumentType], lowerTypeindex[famVariableType]);
-                            	int intersectionUpper = min(upperTypeindex[argumentType], upperTypeindex[famVariableType]);
+                            	int intersectionLower = max(lowerTypeindex[argumentType], lowerTypeindex[countedVariableType]);
+                            	int intersectionUpper = min(upperTypeindex[argumentType], upperTypeindex[countedVariableType]);
 
-                            	for(int lowerObj = intersectionLower ; lowerObj <= intersectionUpper ; lowerObj++){
-                            	    objects.push_back(lowerObj);
-                            	}
+								// check whether the intersection type is empty
+								if (intersectionLower > intersectionUpper)
+									valid = false;
 							}
-                            objectsToCombine.push_back(objects);
-                        }
-                        vector<vector<int>> freeGroundings = getCombinations(objectsToCombine);
-                        if (freeGroundings.size())
-                            idek[pred][typesOfArguments][FAM] = freeGroundings;
+						}
+                        for(size_t constants = 0 ; constants < clearer[FAM][pred]["const"].size() ; constants++){
+                            const vector<int> & const_info = clearer[FAM][pred]["const"][constants];
+                            int indexInPred = const_info[0];
+                            int objectFAM = const_info[1];
+
+							int argumentType = typesOfArguments[indexInPred];
+							if (argumentType < 0){
+								// it is actually a constant
+								int object = -argumentType - 1;
+								// check whether the object is the same
+								if (objectFAM != object)
+									valid = false;
+							} else { 
+                            	if (objectFAM < lowerTypeindex[argumentType] || objectFAM > upperTypeindex[argumentType])
+									valid = false;
+							}
+						}
+
+
+						vector<vector<int>> freeGroundings = getCombinations(objectsToCombine);
+                        if (valid && freeGroundings.size()){
+							for (const vector<int> & freeGrounding : freeGroundings)
+								if (mutexFDRVars[FAM].count(freeGrounding))
+									idek[pred][typesOfArguments][FAM].push_back(freeGrounding);
+						}
                     }
                 }
             }
@@ -1169,8 +1304,8 @@ vector<int> PartiallyGroundedSAT::generateFactVars(sat_capsule & capsule, int ti
 map<int, map<vector<int>, vector<vector<int>>>> PartiallyGroundedSAT::generateFAMVars(void* solver, sat_capsule & capsule, int timestep){
     map<int, map<vector<int>, vector<vector<int>>>> mutexFDRSATVarsTime;
 	cout << "mutexFDRVars " << mutexFDRVars.size() << endl;
-    for(size_t FAM = 0 ; FAM < mutexFDRVars.size() ; FAM++){
-        for (auto const& [key, val] : mutexFDRVars[FAM]){
+    for(auto const & [FAM,groundings] : mutexFDRVars){
+        for (auto const& [key, val] : groundings){
             mutexFDRSATVarsTime[FAM][key].size();
             for(size_t num_vec = 0 ; num_vec < mutexFDRVars[FAM][key].size() ; num_vec++){
                 mutexFDRSATVarsTime[FAM][key].push_back(vector<int>());
@@ -1236,9 +1371,9 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
 
 	     DEBUG(
 	        cout << "---------------FDR SAT variables data structure : --------------------\n";
-	        for(size_t FAM = 0 ; FAM < mutexFDRSATVarsTime.size() ; FAM++){
+	        for(auto const & [FAM, groundings] : mutexFDRSATVarsTime){
 	            cout << "FAM number : " << FAM << endl;
-	            for(auto const& [key, val] : mutexFDRSATVarsTime[FAM]){
+	            for(auto const& [key, val] : groundings){
 	                cout << "\tGrounded Free Vars :";
 	                for(size_t gfv = 0 ; gfv < key.size() ; gfv++){
 	                    cout << " " << key[gfv];
@@ -1330,6 +1465,7 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
         std::vector<vector<std::map<int,int>>> parameterVars;
         vector<vector<int>> actionVars;
         vector<map<int, map<vector<int>, vector<vector<int>>>>> mutexFDRSATVars;
+
 
         for (int timestep = 0; timestep < timesteps; timestep++){
             cout <<"TIMESTEP " << timestep << endl;
@@ -1638,27 +1774,34 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
                     map<int, vector<vector<int>>> correspondingFAMs = idek[predicate][typesOfPredicate];
                     for(auto const& [key, val] : correspondingFAMs){
                         for(size_t grounding = 0 ; grounding < val.size() ; grounding++){
+							assert(mutexFDRVars.count(key));
+							assert(mutexFDRVars[key].count(val[grounding]));
                             vector<int> leftImplication;
                             vector<int> rightImplication;
                             leftImplication.push_back(actionVar);
                             for(size_t freeVars = 0 ; freeVars < clearer[key][predicate]["free"].size() ; freeVars++){
 								int freeVarPosition = clearer[key][predicate]["free"][freeVars][0];
+								int freeVarActual = clearer[key][predicate]["free"][freeVars][1];
+								assert(freeVarPosition < translatePreconditionToGlobalArguments.size());
+								assert(freeVarPosition >= 0);
                                 int trltToGlobalIndex = translatePreconditionToGlobalArguments[freeVarPosition];
 								if (trltToGlobalIndex == -1){
 									// the action's precondition has a constant here!
 									int object = - typesOfPredicate[freeVarPosition] - 1;
 									assert(object >= 0);
-									assert(val[grounding][freeVars] == object);
+									assert(val[grounding][freeVarActual] == object);
 									// nothing to do as this is automatically fulfilled.
 								} else {
 									assert(trltToGlobalIndex != -1);
-                                	leftImplication.push_back(parameterVarsTime[trltToGlobalIndex][val[grounding][freeVars]]);
+                                	leftImplication.push_back(parameterVarsTime[trltToGlobalIndex][val[grounding][freeVarActual]]);
 								}
                             }
                             for(size_t countedVars = 0 ; countedVars < clearer[key][predicate]["counted"].size() ; countedVars++){
                                 const vector<int> & counted_var_info = clearer[key][predicate]["counted"][countedVars];
                                 int trltToGlobalIndex = translatePreconditionToGlobalArguments[counted_var_info[0]];
                                 int countedVariableType = counted_var_info[2];
+								//cout << "FAM " << key << " " << mutexFDRSATVarsTime[key][val[grounding]].size() << " " << counted_var_info[1] << endl; 
+								assert(mutexFDRSATVarsTime[key][val[grounding]].size() > counted_var_info[1]);
                                 const vector<int> & counted_var_objects = mutexFDRSATVarsTime[key][val[grounding]][counted_var_info[1]];
 								
 								if (trltToGlobalIndex == -1){
@@ -1698,7 +1841,7 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
 
 									vector<int> constVars = get_vars_for_const(timestep,trltToGlobalIndex,object,parameterVarsTime); 
 									for (const int & v : constVars)
-										rightImplication.push_back(v);
+										leftImplication.push_back(v);
 								}
 							}
 
@@ -1776,10 +1919,13 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
 							int object = - pwlObjToSATObject[effObjec.arguments[argument].index] - 1;
                         	typesOfPredicate.push_back(object);
                         } else {
+							assert(translateEffectToGlobalArguments[argument] >= 0);
+							assert(translateEffectToGlobalArguments[argument] < typeOfArgument.size());
                         	int type = typeOfArgument[translateEffectToGlobalArguments[argument]];
                         	typesOfPredicate.push_back(type);
 						}
                     }
+					assert(typesOfPredicate.size() == translateEffectToGlobalArguments.size());
 					int lowerIndexGroundedPredicate = lower_predicate_index_in_uncovered[effObjec.predicate_symbol];
 
                     if (effObjec.negated){
@@ -1787,6 +1933,8 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
                         map<int, vector<vector<int>>> correspondingFAMs = idek[predicate][typesOfPredicate];
                         for(auto const& [key, val] : correspondingFAMs){
                             for(size_t grounding = 0 ; grounding < val.size() ; grounding++){
+								assert(mutexFDRVars.count(key));
+								assert(mutexFDRVars[key].count(val[grounding]));
                                 vector<int> negation;
                                 vector<int> leftImplication;
                                 int causeVariable = capsule.new_variable();
@@ -1799,22 +1947,27 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
                                 leftImplication.push_back(actionVar);
                                 for(size_t freeVars = 0 ; freeVars < clearer[key][predicate]["free"].size() ; freeVars++){
 									int freeVarPosition = clearer[key][predicate]["free"][freeVars][0];
+									int freeVarActual = clearer[key][predicate]["free"][freeVars][1];
+									assert(freeVarPosition < translateEffectToGlobalArguments.size());
+									assert(freeVarPosition >= 0);
                                 	int trltToGlobalIndex = translateEffectToGlobalArguments[freeVarPosition];
 									if (trltToGlobalIndex == -1){
 										// the action's precondition has a constant here!
 										int object = - typesOfPredicate[freeVarPosition] - 1;
 										assert(object >= 0);
-										assert(val[grounding][freeVars] == object);
+										assert(val[grounding][freeVarActual] == object);
 										// nothing to do as this is automatically fulfilled.
 									} else {
 										assert(trltToGlobalIndex != -1);
-                                		leftImplication.push_back(parameterVarsTime[trltToGlobalIndex][val[grounding][freeVars]]);
-                                		negation.push_back(parameterVarsTime[trltToGlobalIndex][val[grounding][freeVars]]);
+                                		leftImplication.push_back(parameterVarsTime[trltToGlobalIndex][val[grounding][freeVarActual]]);
+                                		negation.push_back(parameterVarsTime[trltToGlobalIndex][val[grounding][freeVarActual]]);
 									}
 	
 								}
                                 for(size_t countedVars = 0 ; countedVars < clearer[key][predicate]["counted"].size() ; countedVars++){
                                     const vector<int> & counted_var_info = clearer[key][predicate]["counted"][countedVars];
+									assert(counted_var_info.size() == 3);
+									assert(counted_var_info[0] < translateEffectToGlobalArguments.size());
                                     int trltToGlobalIndex = translateEffectToGlobalArguments[counted_var_info[0]];
 									assert(trltToGlobalIndex != -1);
                                     int countedVariableType = counted_var_info[2];
@@ -1849,6 +2002,8 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
                                 }
                             	for(size_t constants = 0 ; constants < clearer[key][predicate]["const"].size() ; constants++){
                             	    const vector<int> & const_info = clearer[key][predicate]["const"][constants];
+									assert(const_info.size() == 2);
+									assert(const_info[0] < translateEffectToGlobalArguments.size());
                             	    int trltToGlobalIndex = translateEffectToGlobalArguments[const_info[0]];
                             	    int object = const_info[1];
 								
@@ -1883,7 +2038,6 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
 
 
                         while(uncovered_facts.size() > lowerIndexGroundedPredicate && all_facts[uncovered_facts[lowerIndexGroundedPredicate]].first == effObjec.predicate_symbol){
-
                             std::vector<int> leftImplication;
                             bool invalidSupport =false;
                             int causeVariable = capsule.new_variable();
@@ -1896,6 +2050,7 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
                             leftImplication.push_back(actionVarsTime[action]);
 							int fact_index = uncovered_facts[lowerIndexGroundedPredicate];
                             for(size_t grounding = 0 ; grounding < all_facts[fact_index].second.size() ; grounding++){
+								assert(grounding < translateEffectToGlobalArguments.size());
                                 if(translateEffectToGlobalArguments[grounding] == -1){
                                     if (all_facts[fact_index].second[grounding] == pwlObjToSATObject[effObjec.arguments[grounding].index]) continue;
                                     invalidSupport = true;
@@ -1920,12 +2075,12 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
 
                         }
                     } else {
-                        // TODO adding effects
-                        //
-
-                        map<int, vector<vector<int>>> correspondingFAMs = idek[predicate][typesOfPredicate];
+                        // adding effects
+						map<int, vector<vector<int>>> correspondingFAMs = idek[predicate][typesOfPredicate];
                         for(auto const& [key, val] : correspondingFAMs){
-                            for(size_t grounding = 0 ; grounding < val.size() ; grounding++){
+							for(size_t grounding = 0 ; grounding < val.size() ; grounding++){
+								assert(mutexFDRVars.count(key));
+								assert(mutexFDRVars[key].count(val[grounding]));
 								// actual effect
                                 vector<int> leftImplication;
                                 vector<int> rightImplication;
@@ -1935,23 +2090,31 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
 
                                 for(size_t freeVars = 0 ; freeVars < clearer[key][predicate]["free"].size() ; freeVars++){
                                    	int freeVarPosition = clearer[key][predicate]["free"][freeVars][0];
+									int freeVarActual = clearer[key][predicate]["free"][freeVars][1];
+									assert(freeVarPosition < translateEffectToGlobalArguments.size());
+									assert(freeVarPosition >= 0);
                                 	int trltToGlobalIndex = translateEffectToGlobalArguments[freeVarPosition];
+									assert(freeVarActual < val[grounding].size());
 									if (trltToGlobalIndex == -1){
 										// the action's precondition has a constant here!
 										int object = - typesOfPredicate[freeVarPosition] - 1;
 										assert(object >= 0);
-										assert(val[grounding][freeVars] == object);
+										assert(val[grounding][freeVarActual] == object);
 										// nothing to do as this is automatically fulfilled.
 									} else {
 										assert(trltToGlobalIndex != -1);
-                                		leftImplication.push_back(parameterVarsTime[trltToGlobalIndex][val[grounding][freeVars]]);
+										assert(parameterVarsTime[trltToGlobalIndex].count(val[grounding][freeVarActual]));
+                                		leftImplication.push_back(parameterVarsTime[trltToGlobalIndex][val[grounding][freeVarActual]]);
 									}
                                 }
                                 for(size_t countedVars = 0 ; countedVars < clearer[key][predicate]["counted"].size() ; countedVars++){
                                     const vector<int> & counted_var_info = clearer[key][predicate]["counted"][countedVars];
+									assert(counted_var_info.size() == 3);
+									assert(counted_var_info[0] < translateEffectToGlobalArguments.size());
                                     int trltToGlobalIndex = translateEffectToGlobalArguments[counted_var_info[0]];
 									assert(trltToGlobalIndex != -1);
                                     int countedVariableType = counted_var_info[2];
+									assert(counted_var_info[1] < mutexFDRSATVarsNextTime[key][val[grounding]].size());
                                     const vector<int> & counted_var_objects = mutexFDRSATVarsNextTime[key][val[grounding]][counted_var_info[1]];
 									
 									int causeVariable = capsule.new_variable();
@@ -1982,6 +2145,8 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
                                 }
                             	for(size_t constants = 0 ; constants < clearer[key][predicate]["const"].size() ; constants++){
                             	    const vector<int> & const_info = clearer[key][predicate]["const"][constants];
+									assert(const_info.size() == 2);
+									assert(const_info[0] < translateEffectToGlobalArguments.size());
                             	    int trltToGlobalIndex = translateEffectToGlobalArguments[const_info[0]];
                             	    int object = const_info[1];
 								
@@ -1992,13 +2157,12 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
 
 									} else {
 										assert(trltToGlobalIndex != -1);
-
+										// FAM group has a constant -> this FAM group is only affected if the action has the correct parameter at this position
 										vector<int> constVars = get_vars_for_const(timestep,trltToGlobalIndex,object,parameterVarsTime); 
 										for (const int & v : constVars)
-											rightImplication.push_back(v);
+											leftImplication.push_back(v);
 									}
 								}
-
 
                                 for(size_t p = 0 ; p < mutexFDRVars[key][val[grounding]][mutexFDRVars[key][val[grounding]].size()-1].size() ; p++){
                                     if(mutexFDRVars[key][val[grounding]][mutexFDRVars[key][val[grounding]].size()-1][p] == predicate){
@@ -2013,26 +2177,31 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
                                     }
                                 }
 
+
                                 for (const int & l : rightImplication)
-                                    andImplies(solver,leftImplication,l);
+                                    andImplies(solver,leftImplication,l);				
+
 
 								// preparation for frame axioms: truth of the cause variables
                                 for (size_t rightIndex = 0; rightIndex < rightImplicationCauseVariables.size(); rightIndex++){
 									pair<int,int> implicationCause  = rightImplicationCauseVariables[rightIndex]; 
 									int causeVariable = implicationCause.first;
 									int rightImplied = implicationCause.second;
+									assert(causeVariable > 0);
+									assert(rightImplied > 0 || rightImplied == -1);
 									// if this cause happens all its conditions must be true
 									if (rightImplied > 0)
 										// we must have changed the counted variable to is current value.
 										implies(solver, causeVariable, rightImplied); // for predicates to change there is no additional condition
-									for (const int & l : leftImplication)
+									for (const int & l : leftImplication){
+										assert(l);
 										implies(solver, causeVariable, l);
+									}
 								}
                             }
                         }
 
                         while(uncovered_facts.size() > lowerIndexGroundedPredicate && all_facts[uncovered_facts[lowerIndexGroundedPredicate]].first == effObjec.predicate_symbol){
-
                             std::vector<int> leftImplication;
                             bool invalidSupport =false;
                             int causeVariable = capsule.new_variable();
@@ -2077,7 +2246,7 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
                         //implies(solver,causeVariable,parameterVar2); // and so on
                     }
 
-                    translateEffectToGlobalArguments.clear();
+                    //translateEffectToGlobalArguments.clear();
                 }
 
                 clauseNumber(effectImplications);
@@ -2111,6 +2280,7 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
             
 		
 			for (const auto & [fam, _fam] : mutexFDRSATVarsNextTime){
+				//continue;
 				for (const auto & [free_grounding, counted_groundings] : _fam){
 					for (size_t counted = 0; counted < counted_groundings.size(); counted++){
 						if (counted != counted_groundings.size() - 1){
@@ -2161,8 +2331,7 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
             swap(previousTimeMutexPredicateVars,currentTimeMutexPredicateVars);
             swap(mutexFDRSATVarsNextTime,mutexFDRSATVarsTime);
         }
-
-
+		
         // assert that the goal is true. This should reference the previousTimeMutexPredicateVars
         vector<int> factsInGoalState;
         for (size_t goal = 0; goal < task.goal.goal.size(); goal++){
