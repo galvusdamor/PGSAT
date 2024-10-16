@@ -1126,7 +1126,7 @@ map<int, map<vector<int>, vector<vector<int>>>> PartiallyGroundedSAT::generateFA
 						} else {
 							value = task.objects[satObjectToPWLObject[int_obj]].getName();
 						}
-						capsule.registerVariable(groundedCountedObjectVar,"fam " + to_string(FAM) + " - " + name + " var " + to_string(num_vec) + " = " + value);
+						capsule.registerVariable(groundedCountedObjectVar,"fam@" + to_string(timestep)+ " " + to_string(FAM) + " - " + name + " var " + to_string(num_vec) + " = " + value);
 					);
                 }
                 atMostOne(solver, capsule, mutexFDRSATVarsTime[FAM][key][num_vec]);
