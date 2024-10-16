@@ -806,6 +806,7 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task) :
         for(size_t mutexes = 0 ; mutexes < fam_based_mutexes.size() ; mutexes++){
             pair<int, vector<int>> mutex = fam_based_mutexes[mutexes];
 
+			cout << "Checking Fact " << facts << " in mutex " << mutexes << endl;
             for (int j = 0; j < (lifted_mgroups.mgroup + FAM_group_indexes[mutex.first])->cond.size; j++){
                 const pddl_fm_atom_t *atom = pddlFmToAtomConst((lifted_mgroups.mgroup + FAM_group_indexes[mutex.first])->cond.fm[j]);
                 if(pddl->pred.pred[atom->pred].id == powerLiftedPredicatesToCPDDLPredicates[fact.first]){
@@ -1797,31 +1798,75 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
                                 negation.push_back(actionVar);
                                 leftImplication.push_back(actionVar);
                                 for(size_t freeVars = 0 ; freeVars < clearer[key][predicate]["free"].size() ; freeVars++){
-                                    int trltToGlobalIndex = translateEffectToGlobalArguments[clearer[key][predicate]["free"][freeVars][0]];
-									assert(trltToGlobalIndex != -1);
-                                    negation.push_back(parameterVarsTime[trltToGlobalIndex][val[grounding][freeVars]]);
-                                    leftImplication.push_back(parameterVarsTime[trltToGlobalIndex][val[grounding][freeVars]]);
-                                }
+									int freeVarPosition = clearer[key][predicate]["free"][freeVars][0];
+                                	int trltToGlobalIndex = translateEffectToGlobalArguments[freeVarPosition];
+									if (trltToGlobalIndex == -1){
+										// the action's precondition has a constant here!
+										int object = - typesOfPredicate[freeVarPosition] - 1;
+										assert(object >= 0);
+										assert(val[grounding][freeVars] == object);
+										// nothing to do as this is automatically fulfilled.
+									} else {
+										assert(trltToGlobalIndex != -1);
+                                		leftImplication.push_back(parameterVarsTime[trltToGlobalIndex][val[grounding][freeVars]]);
+                                		negation.push_back(parameterVarsTime[trltToGlobalIndex][val[grounding][freeVars]]);
+									}
+	
+								}
                                 for(size_t countedVars = 0 ; countedVars < clearer[key][predicate]["counted"].size() ; countedVars++){
                                     const vector<int> & counted_var_info = clearer[key][predicate]["counted"][countedVars];
                                     int trltToGlobalIndex = translateEffectToGlobalArguments[counted_var_info[0]];
 									assert(trltToGlobalIndex != -1);
                                     int countedVariableType = counted_var_info[2];
-
                                     const vector<int> & counted_var_objects = mutexFDRSATVarsNextTime[key][val[grounding]][counted_var_info[1]];
-                                    int cntOfType = get_counted_of_type_var(solver, capsule, timestep, trltToGlobalIndex, countedVariableType, parameterVarsTime);
-                                    int equals_var = get_equals_var(solver, capsule, timestep, timestep+1, trltToGlobalIndex, key, counted_var_info[1], val[grounding], countedVars,
-                                        counted_var_objects, countedVariableType, parameterVarsTime);
+                                	const vector<int> & counted_var_objects_bef = mutexFDRSATVarsTime[key][val[grounding]][counted_var_info[1]];
+								
+									if (trltToGlobalIndex == -1){
+										// the action's precondition has a constant here!
+										int object = - typesOfPredicate[counted_var_info[0]] - 1;
+										// object must belong to the type of the counted var
+										assert(object <= upperTypeindex[countedVariableType]);
+										assert(object >= lowerTypeindex[countedVariableType]);
+                                		vector<int> objectVars = get_counted_vars_for_const(object, counted_var_objects, countedVariableType);
+                                		vector<int> objectVarsBef = get_counted_vars_for_const(object, counted_var_objects_bef, countedVariableType);
+										for (const int & v : objectVars)
+											negation.push_back(v);
+										for (const int & v : objectVarsBef)
+											leftImplication.push_back(v);
+									} else {
+                                	    
+										int cntOfType = get_counted_of_type_var(solver, capsule, timestep, trltToGlobalIndex, countedVariableType, parameterVarsTime);
+                                	    int equals_var = get_equals_var(solver, capsule, timestep, timestep+1, trltToGlobalIndex, key, counted_var_info[1], val[grounding], countedVars,
+                                	        counted_var_objects, countedVariableType, parameterVarsTime);
 
-                                    const vector<int> & counted_var_objects_bef = mutexFDRSATVarsTime[key][val[grounding]][counted_var_info[1]];
-                                    int equals_var_bef = get_equals_var(solver, capsule, timestep, timestep, trltToGlobalIndex, key, counted_var_info[1], val[grounding], countedVars,
-                                        counted_var_objects_bef, countedVariableType, parameterVarsTime);
-                                    negation.push_back(cntOfType);
-                                    leftImplication.push_back(cntOfType);
-                                    negation.push_back(equals_var);
-                                    leftImplication.push_back(equals_var_bef);
+                                	    int equals_var_bef = get_equals_var(solver, capsule, timestep, timestep, trltToGlobalIndex, key, counted_var_info[1], val[grounding], countedVars,
+                                	        counted_var_objects_bef, countedVariableType, parameterVarsTime);
+                                	    negation.push_back(cntOfType);
+                                	    leftImplication.push_back(cntOfType);
+                                	    negation.push_back(equals_var);
+                                	    leftImplication.push_back(equals_var_bef);
+									}
                                 }
-                                for(size_t p = 0 ; p < mutexFDRVars[key][val[grounding]][mutexFDRVars[key][val[grounding]].size()-1].size() ; p++){
+                            	for(size_t constants = 0 ; constants < clearer[key][predicate]["const"].size() ; constants++){
+                            	    const vector<int> & const_info = clearer[key][predicate]["const"][constants];
+                            	    int trltToGlobalIndex = translateEffectToGlobalArguments[const_info[0]];
+                            	    int object = const_info[1];
+								
+									if (trltToGlobalIndex == -1){
+										// the action's precondition has a constant here!
+										int objectInPrecondition = - typesOfPredicate[const_info[0]] - 1;
+										assert(object == objectInPrecondition);
+									} else {
+										assert(trltToGlobalIndex != -1);
+
+										vector<int> constVars = get_vars_for_const(timestep,trltToGlobalIndex,object,parameterVarsTime); 
+										for (const int & v : constVars)
+											negation.push_back(v);
+									}
+								}
+
+
+								for(size_t p = 0 ; p < mutexFDRVars[key][val[grounding]][mutexFDRVars[key][val[grounding]].size()-1].size() ; p++){
                                     if(mutexFDRVars[key][val[grounding]][mutexFDRVars[key][val[grounding]].size()-1][p] == predicate){
                                         negation.push_back(mutexFDRSATVarsNextTime[key][val[grounding]][mutexFDRVars[key][val[grounding]].size()-1][p]);
                                         leftImplication.push_back(mutexFDRSATVarsTime[key][val[grounding]][mutexFDRVars[key][val[grounding]].size()-1][p]);
@@ -1889,30 +1934,72 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
                             	
 
                                 for(size_t freeVars = 0 ; freeVars < clearer[key][predicate]["free"].size() ; freeVars++){
-                                    int trltToGlobalIndex = translateEffectToGlobalArguments[clearer[key][predicate]["free"][freeVars][0]];
-									assert(trltToGlobalIndex != -1);
-                                    leftImplication.push_back(parameterVarsTime[trltToGlobalIndex][val[grounding][freeVars]]);
+                                   	int freeVarPosition = clearer[key][predicate]["free"][freeVars][0];
+                                	int trltToGlobalIndex = translateEffectToGlobalArguments[freeVarPosition];
+									if (trltToGlobalIndex == -1){
+										// the action's precondition has a constant here!
+										int object = - typesOfPredicate[freeVarPosition] - 1;
+										assert(object >= 0);
+										assert(val[grounding][freeVars] == object);
+										// nothing to do as this is automatically fulfilled.
+									} else {
+										assert(trltToGlobalIndex != -1);
+                                		leftImplication.push_back(parameterVarsTime[trltToGlobalIndex][val[grounding][freeVars]]);
+									}
                                 }
                                 for(size_t countedVars = 0 ; countedVars < clearer[key][predicate]["counted"].size() ; countedVars++){
                                     const vector<int> & counted_var_info = clearer[key][predicate]["counted"][countedVars];
                                     int trltToGlobalIndex = translateEffectToGlobalArguments[counted_var_info[0]];
 									assert(trltToGlobalIndex != -1);
                                     int countedVariableType = counted_var_info[2];
-
                                     const vector<int> & counted_var_objects = mutexFDRSATVarsNextTime[key][val[grounding]][counted_var_info[1]];
-                                    int cntOfType = get_counted_of_type_var(solver, capsule, timestep, trltToGlobalIndex, countedVariableType, parameterVarsTime);
-                                    int equals_var = get_equals_var(solver, capsule, timestep, timestep+1, trltToGlobalIndex, key, counted_var_info[1], val[grounding], countedVars,
-                                        counted_var_objects, countedVariableType, parameterVarsTime);
-                                    leftImplication.push_back(cntOfType);
-                                    rightImplication.push_back(equals_var);
-
-
+									
 									int causeVariable = capsule.new_variable();
 									// TODO Add good debugging name
-		                            DEBUG(capsule.registerVariable(causeVariable, "fdr-adder@" + to_string(timestep) + "-FAM"));
+		                        	DEBUG(capsule.registerVariable(causeVariable, "fdr-adder@" + to_string(timestep) + "-FAM"));
 									changers[key][val[grounding]][counted_var_info[1]].push_back(causeVariable);
-									rightImplicationCauseVariables.push_back({causeVariable,equals_var});
+
+									if (trltToGlobalIndex == -1){
+										// the action's effect has a constant here!
+										int object = - typesOfPredicate[counted_var_info[0]] - 1;
+										// object must belong to the type of the counted var
+										assert(object <= upperTypeindex[countedVariableType]);
+										assert(object >= lowerTypeindex[countedVariableType]);
+                                		vector<int> objectVars = get_counted_vars_for_const(object, counted_var_objects, countedVariableType);
+										for (const int & v : objectVars){
+											rightImplication.push_back(v);
+											rightImplicationCauseVariables.push_back({causeVariable,v});
+										}
+									} else {
+
+                                	    int cntOfType = get_counted_of_type_var(solver, capsule, timestep, trltToGlobalIndex, countedVariableType, parameterVarsTime);
+                                	    int equals_var = get_equals_var(solver, capsule, timestep, timestep+1, trltToGlobalIndex, key, counted_var_info[1], val[grounding], countedVars,
+                                	        counted_var_objects, countedVariableType, parameterVarsTime);
+                                	    leftImplication.push_back(cntOfType);
+                                	    rightImplication.push_back(equals_var);
+										rightImplicationCauseVariables.push_back({causeVariable,equals_var});
+									}
                                 }
+                            	for(size_t constants = 0 ; constants < clearer[key][predicate]["const"].size() ; constants++){
+                            	    const vector<int> & const_info = clearer[key][predicate]["const"][constants];
+                            	    int trltToGlobalIndex = translateEffectToGlobalArguments[const_info[0]];
+                            	    int object = const_info[1];
+								
+									if (trltToGlobalIndex == -1){
+										// the action's precondition has a constant here!
+										int objectInPrecondition = - typesOfPredicate[const_info[0]] - 1;
+										assert(object == objectInPrecondition);
+
+									} else {
+										assert(trltToGlobalIndex != -1);
+
+										vector<int> constVars = get_vars_for_const(timestep,trltToGlobalIndex,object,parameterVarsTime); 
+										for (const int & v : constVars)
+											rightImplication.push_back(v);
+									}
+								}
+
+
                                 for(size_t p = 0 ; p < mutexFDRVars[key][val[grounding]][mutexFDRVars[key][val[grounding]].size()-1].size() ; p++){
                                     if(mutexFDRVars[key][val[grounding]][mutexFDRVars[key][val[grounding]].size()-1][p] == predicate){
                                         rightImplication.push_back(mutexFDRSATVarsNextTime[key][val[grounding]][mutexFDRVars[key][val[grounding]].size()-1][p]);
@@ -1930,9 +2017,10 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
                                     andImplies(solver,leftImplication,l);
 
 								// preparation for frame axioms: truth of the cause variables
-                                for (size_t rightIndex = 0; rightIndex < rightImplication.size(); rightIndex++){
-									const auto & [causeVariable, rightImplied] = rightImplicationCauseVariables[rightIndex]; 
-
+                                for (size_t rightIndex = 0; rightIndex < rightImplicationCauseVariables.size(); rightIndex++){
+									pair<int,int> implicationCause  = rightImplicationCauseVariables[rightIndex]; 
+									int causeVariable = implicationCause.first;
+									int rightImplied = implicationCause.second;
 									// if this cause happens all its conditions must be true
 									if (rightImplied > 0)
 										// we must have changed the counted variable to is current value.
