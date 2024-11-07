@@ -13,6 +13,19 @@
 #include "../task.h"
 
 class PartiallyGroundedSAT : public BaseSATEncoding{
+
+    enum LFG_VAR_TYPES { 
+        LFG_FREE,
+        LFG_COUNTED,
+        LFG_CONST
+    }; 
+
+    enum COUNTED_VAR_INFO { 
+        INDEX,
+        PARAM_ID,
+        TYPE
+    };
+
 private:
     std::vector<std::pair<int, std::vector<int>>> all_facts;
     std::map<std::pair<int, std::vector<int>>,int> all_facts_index;
@@ -25,7 +38,7 @@ private:
 	std::vector<std::pair<int, std::vector<int>>> fam_based_mutexes;
 
     std::vector<std::string> factToString;
-    std::map<int, std::map<int, std::map<std::string, std::vector<std::vector<int>>>>> clearer;
+    std::map<int, std::map<int, std::map<LFG_VAR_TYPES, std::vector<std::vector<int>>>>> clearer;
     std::map<int,std::map<std::vector<int>, std::vector<std::vector<int>>>> mutexFDRVars;
     std::map<int, std::map<std::vector<int>, std::map<int, std::vector<std::vector<int>>>>> idek;
     void generatePredicateStrings();

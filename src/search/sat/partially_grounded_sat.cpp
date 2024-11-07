@@ -50,19 +50,6 @@ static int objEq(const pddl_list_t *key1, const pddl_list_t *key2, void *_)
     return strcmp(obj1->name, obj2->name) == 0;
 }
 
-int increase(vector<int> lower, vector<int> upper, vector<int> &current, int index){
-    if(index < 0){
-        return 0;
-    }
-    if(current[index]+1 <= upper[index]){
-        current[index] += 1;
-        return 1;
-    }else{
-        current[index] = lower[index];
-        return increase(lower, upper, current, index-1);
-    }
-}
-
 void generateCombinations(const vector<vector<int>>& input, vector<int>& current, int depth, vector<vector<int>>& result) {
     // If the current combination has elements from all vectors, add it to the result
     if (depth == input.size()) {
@@ -315,7 +302,15 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task) :
 	cout << "Extracting FAM groups using [Fiser, AAAI 2020] ..." << endl;
 
 	pddl_t * pddl = new pddl_t;
+    //bzero(pddl,sizeof(pddl_t)); // Replace with the lines below as suggested by Dan
+    /*BEGINNING OF REPLACEMENT*/
     bzero(pddl,sizeof(pddl_t));
+    pddlTypesInit(&pddl->type);
+    pddlObjsInit(&pddl->obj);
+    pddlPredsInitEq(&pddl->pred);
+    pddlPredsInitEmpty(&pddl->func);
+    pddlActionsInit(&pddl->action);
+    /*END OF REPLACEMENT*/
     std::string name = "dom";
     pddl->domain_name = const_cast<char*>(name.c_str());
     std::string name2 = "prob";
@@ -326,43 +321,45 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task) :
 
 	
 	// adding all the types to CPDDL
-	pddlTypesAdd(&pddl->type,root_type_cppdl,-1);
+	//pddlTypesAdd(&pddl->type,root_type_cppdl,-1);
     for (int i = 0; i < task.type_names.size(); i++) {
-		pddlTypesAdd(&pddl->type,task.type_names[i].c_str(),directparents[i]+1);
+        string t_name = "pwl_"+task.type_names[i];
+		pddlTypesAdd(&pddl->type, t_name.c_str(), directparents[i]+1);
 
 	}
 
-
-	bzero(&pddl->obj, sizeof(pddl->obj));
-	pddl->obj.htable = pddlHTableNew(objHash, objEq, NULL);
+	//bzero(&pddl->obj, sizeof(pddl->obj)); //Removed as suggested by Dan
+	//pddl->obj.htable = pddlHTableNew(objHash, objEq, NULL); //Removed as suggested by Dan
 
     vector<int> type_of_object;
 	for (tSize obj = 0; obj < task.objects.size(); obj++) {
         auto oTypes = task.objects[obj].getTypes();
-		int actType = -1;
-		int typesize = 0x3f3f3f3f;
+        auto correct_type = task.objects[obj].getTypes();
         for (tSize i = 0; i < oTypes.size(); i++) {
-            int j = oTypes[i];
-            if (types[j].size() < typesize){
-				typesize = types[j].size();
-				actType = j;
-			}
+            correct_type.erase(remove(correct_type.begin(), correct_type.end(), directparents[oTypes[i]]), correct_type.end());
         }
-
+        assert(correct_type.size() == 1);
 		pddl_obj_t *objP = pddlObjsAdd(&pddl->obj, task.objects[obj].getName().c_str());
-		objP->type = actType + 1;
-        type_of_object.push_back(actType);
-		objP->is_constant = false;
+		objP->type = correct_type[0]+1;
+        type_of_object.push_back(correct_type[0]);
+		objP->is_constant = pddl_false;
+        int obj_id = pddlObjsGet(&pddl->obj, task.objects[obj].getName().c_str());
+        pddlTypesAddObj(&pddl->type, obj_id, correct_type[0]+1);
 	}
 
-    pddlPredsInitEq(&pddl->pred);
+    //pddlTypesPrint(&pddl->type, stdout);
+
+    //pddlPredsInitEq(&pddl->pred); //Removed as suggested by Dan
 
     std::vector<int> powerLiftedPredicatesToCPDDLPredicates (task.predicates.size());
     std::vector<int> CPDDLPredicatesToPWLPredicates (task.predicates.size());
     for (tSize pred = 0; pred < task.predicates.size(); pred++) {
-        cout << task.predicates[pred].getName() << endl;
         if (task.predicates[pred].getName() == "=") {
             powerLiftedPredicatesToCPDDLPredicates[pred] = 0;
+            continue;
+        }
+        if (task.predicates[pred].getName().rfind("type@", 0) == 0){
+            powerLiftedPredicatesToCPDDLPredicates[pred] = pddl->pred.pred_size;
             continue;
         }
         powerLiftedPredicatesToCPDDLPredicates[pred] = pddl->pred.pred_size;
@@ -378,6 +375,8 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task) :
     for(size_t i = 0 ; i < powerLiftedPredicatesToCPDDLPredicates.size() ; i++){
         CPDDLPredicatesToPWLPredicates[powerLiftedPredicatesToCPDDLPredicates[i]] = i;
     }
+
+    //pddlPredsPrint(&pddl->pred, "Predicate", stdout);
 
 
 
@@ -423,6 +422,8 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task) :
     pddl->init = pddlFmToAnd(pddlFmNewEmptyAnd());
     for (tSize i = 0; i < task.get_static_info().get_relations().size(); i++) {
         auto rel = task.get_static_info().get_relations()[i];
+        if (task.predicates[task.initial_state.get_relations()[i].predicate_symbol].getName().rfind("type@", 0) == 0) continue;
+        if (task.predicates[task.initial_state.get_relations()[i].predicate_symbol].getName().rfind("=", 0) == 0) continue;
         auto tuple = task.get_static_info().get_tuples_of_relation(i);
         for (vector<int> groundA: tuple) {
             pddl_fm_atom_t *a = pddlFmNewEmptyAtom(groundA.size());
@@ -437,6 +438,8 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task) :
 
     for (tSize i = 0; i < task.initial_state.get_relations().size(); i++) {
         auto rel = task.initial_state.get_relations()[i];
+        if (task.predicates[task.initial_state.get_relations()[i].predicate_symbol].getName().rfind("type@", 0) == 0) continue;
+        if (task.predicates[task.initial_state.get_relations()[i].predicate_symbol].getName().rfind("=", 0) == 0) continue;
         auto tuple = task.initial_state.get_tuples_of_relation(i);
         for (vector<int> groundA: tuple) {
             pddl_fm_atom_t *a = pddlFmNewEmptyAtom(groundA.size());
@@ -481,6 +484,8 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task) :
 		} else {
             a->pre = pddlFmNewEmptyAnd();
             for(size_t precid = 0 ; precid < task.actions[aid].get_precondition().size() ; precid++){
+                if(task.actions[aid].get_precondition()[precid].name.rfind("type@", 0) == 0) continue;
+                if (task.actions[aid].get_precondition()[precid].name.rfind("=", 0) == 0) continue;
                 size_t argSize = task.actions[aid].get_precondition()[precid].arguments.size();
                 pddl_fm_atom_t *atom = pddlFmNewEmptyAtom(argSize);
                 atom->pred = powerLiftedPredicatesToCPDDLPredicates[task.actions[aid].get_precondition()[precid].predicate_symbol];
@@ -518,6 +523,8 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task) :
 
     }
 
+    //pddlActionsPrint(pddl, &pddl->action, stdout);
+
     
 
     pddlObjsPropagateToTypes(&pddl->obj, &pddl->type);
@@ -529,6 +536,8 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task) :
         pddl->pred.pred[i].write = pddl_true;
     } */
 
+    //pddlPrintPDDLDomain(pddl,stdout);
+    //pddlPrintPDDLProblem(pddl,stdout);
 
     pddl_lifted_mgroups_infer_limits_t limits = PDDL_LIFTED_MGROUPS_INFER_LIMITS_INIT;
 	limits.max_candidates = 10000;
@@ -586,7 +595,6 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task) :
         for (int j = 0; j < (lifted_mgroups.mgroup + i)->cond.size; j++){
             const pddl_fm_atom_t *atom = pddlFmToAtomConst((lifted_mgroups.mgroup + i)->cond.fm[j]);
             mutex_predicates[i].push_back(pddl->pred.pred[atom->pred].name);
-            //cout << pddl->pred.pred[atom->pred].name << endl;
         }
     }
 
@@ -597,22 +605,22 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task) :
         if (pruned[i]) continue;
         for (int j = 0; j < (lifted_mgroups.mgroup + i)->cond.size; j++){
             const pddl_fm_atom_t *atom = pddlFmToAtomConst((lifted_mgroups.mgroup + i)->cond.fm[j]);
-            map<string, vector<vector<int>>> aux;
+            map<LFG_VAR_TYPES, vector<vector<int>>> aux;
             for (int k = 0; k < atom->arg_size; k++){
                 if (atom->arg[k].param >= 0){
                     int param_id = atom->arg[k].param;
                     const pddl_param_t *p = (lifted_mgroups.mgroup + i)->param.param + param_id;
                     if (p->is_counted_var){
                         vector<int> x = {k, param_id, p->type-1};
-                        aux["counted"].push_back(x);
+                        aux[LFG_COUNTED].push_back(x);
                     }else{
                         vector<int> x = {k, param_id, p->type-1};
-                        aux["free"].push_back(x);
+                        aux[LFG_FREE].push_back(x);
                     }
                 } else {
 					// position in the predicate and the actual object (sat object!)
                     vector<int> x = {k, pwlObjToSATObject[atom->arg[k].obj]};
-					aux["const"].push_back(x);
+					aux[LFG_CONST].push_back(x);
 				}
             }
             clearer[seqIndex][CPDDLPredicatesToPWLPredicates[atom->pred]] = aux;
@@ -630,7 +638,7 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task) :
                     cout << "\t\tType of variable : " << key2 << endl;
                     for(size_t vars = 0 ; vars < clearer[key][key1][key2].size() ; vars++){
 						const vector<int> & vec = val2[vars];
-						if (key2 == "const")
+						if (key2 == LFG_CONST)
                         	cout << "\t\t\tIndex : " << vec[0] << " ; const: " << vec[1] << endl;
 						else
                         	cout << "\t\t\tIndex : " << vec[0] << " ; ParamId : " << vec[1] << " ; Type : " << vec[2] << endl;
@@ -752,12 +760,51 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task) :
         cout << endl;
     });
 
+    set<int> predicatesInPreconditions;
+    for(size_t a = 0 ; a < task.actions.size() ; a++){
+        const auto precs = task.actions[a].get_precondition();
+        for(size_t prec = 0 ; prec < precs.size() ; prec++){
+            predicatesInPreconditions.insert(precs[prec].predicate_symbol);
+        }
+    }
+
+    map<int, vector<vector<int>>> specialGoals;
+    for(size_t g = 0 ; g < task.goal.goal.size() ; g++){
+        if( predicatesInPreconditions.find(task.goal.goal[g].predicate) == predicatesInPreconditions.end() ){
+            vector<int> convertedArgs;
+            for(size_t obj = 0 ; obj < task.goal.goal[g].args.size() ; obj++){
+                convertedArgs.push_back(pwlObjToSATObject[task.goal.goal[g].args[obj]]);
+            }
+            specialGoals[task.goal.goal[g].predicate].push_back(convertedArgs);
+        }
+    }
+
+    DEBUG(
+        cout << "Special Goals : \n";
+        for (auto const& [key, val] : specialGoals){
+            cout << "Predicate : "<< key << endl;
+            for(size_t grounding = 0 ; grounding < specialGoals[key].size() ; grounding++){
+                cout << "\tArguments :";
+                for(size_t arg = 0 ; arg < specialGoals[key][grounding].size() ; arg++){
+                    cout << " " << specialGoals[key][grounding][arg];
+                }
+                cout << endl;
+            }
+            cout << endl;
+        }
+    );
 
     /* map<pair<int, vector<int>>,int> all_facts_index; */
     for(size_t predicates = 0 ;  predicates < task.predicates.size() ; predicates++){
         if (task.predicates[predicates].getName().rfind("type@", 0) == 0) continue;
 		if (task.predicates[predicates].getName().rfind("=", 0) == 0) continue;
         if (task.predicates[predicates].isStaticPredicate()) continue;
+        if( specialGoals.find(predicates) != specialGoals.end() ){//CHECK WITH GREGOR IF PREDICATES INDEX ALWAYS MATCHES ID
+            for(size_t grounding = 0 ; grounding < specialGoals[predicates].size() ; grounding++){
+                all_facts.push_back({predicates, specialGoals[predicates][grounding]});
+            }
+            continue;
+        }
         cout << predicates << " : " << task.predicates[predicates].getName() << endl;
         vector<int> predicate_arguments = task.predicates[predicates].getTypes();
         if(task.predicates[predicates].getArity() >= 2){
@@ -855,7 +902,7 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task) :
         mutexes_with_fact.clear();
     }
 
-     DEBUG(for(size_t facts = 0 ; facts < all_facts.size() ; facts++){
+    /* DEBUG(for(size_t facts = 0 ; facts < all_facts.size() ; facts++){
         cout << "Fact " << facts << " :";
         for(size_t i = 0 ; i < fact_to_mutexes[facts].size() ; i++){
             cout << " " << fact_to_mutexes[facts][i];
@@ -865,7 +912,7 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task) :
 		for (const int & i : all_facts[facts].second)
 			cout << " " << i;
 		cout << endl;
-    });
+    }); */
 
     map<int, vector<int>> mutex_to_facts;
     for(size_t i = 0 ; i < fact_to_mutexes.size() ; i++){
@@ -930,7 +977,6 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task) :
         }
     }
 
-
     for(size_t selected_mutex = 0 ; selected_mutex < selected_mutexes.size() ; selected_mutex++){
         pair<int, vector<int>> mutex = fam_based_mutexes[selected_mutexes[selected_mutex]];
         mutexFDRVars[mutex.first][mutex.second].size();
@@ -954,7 +1000,8 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task) :
         mutexFDRVars[mutex.first][mutex.second][highestCountedVars[mutex.first]+1].push_back(-1);
     }
 
-     DEBUG(
+
+     /* DEBUG(
         cout << "---------------FDR variables data structure : --------------------\n";
         for(auto const & [FAM, groundings] : mutexFDRVars){
             cout << "FAM number : " << FAM << endl;
@@ -975,7 +1022,7 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task) :
                 cout << ">\n";
             }
         }
-    );
+    ); */
 
     //map<int, map<int, vector<map<string, vector<vector<int>>>>>> clearer
     idek.clear();//pred -> {[typesOfArguments] -> {Fam -> {[[allFreeGroundings]]}}}
@@ -1004,8 +1051,8 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task) :
 						// go over the free variables *of the FAM group*
 						for (const auto & [freeVar, freeVarType] : mutex_fixed_variable[FAM]){
                         	int thisFreeVarPosition = -1;
-							for(size_t freeVarInPred = 0 ; freeVarInPred < clearer[FAM][pred]["free"].size() ; freeVarInPred++){
-                            	int inPredVar = clearer[FAM][pred]["free"][freeVarInPred][1];
+							for(size_t freeVarInPred = 0 ; freeVarInPred < clearer[FAM][pred][LFG_FREE].size() ; freeVarInPred++){
+                            	int inPredVar = clearer[FAM][pred][LFG_FREE][freeVarInPred][1];
 								if (inPredVar == freeVar){
 									assert(thisFreeVarPosition == -1); // TODO hard assumption: free vars occur only once in literals
 									thisFreeVarPosition = freeVarInPred;
@@ -1013,8 +1060,8 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task) :
 							}
 							// can happen that the free variable is actually not mentioned in this predicate!
 							if (thisFreeVarPosition != -1){
-                            	int indexInPred = clearer[FAM][pred]["free"][thisFreeVarPosition][0];
-                            	int famVariableType = clearer[FAM][pred]["free"][thisFreeVarPosition][2];
+                            	int indexInPred = clearer[FAM][pred][LFG_FREE][thisFreeVarPosition][0];
+                            	int famVariableType = clearer[FAM][pred][LFG_FREE][thisFreeVarPosition][2];
                             	vector<int> objects;
 
 								int argumentType = typesOfArguments[indexInPred];
@@ -1045,8 +1092,8 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task) :
 
 						// the counted variables and constants in the FAM group might not be compatible with the types of this precondition.
 						bool valid = true;
-					    for(size_t countedVars = 0 ; countedVars < clearer[FAM][pred]["counted"].size() ; countedVars++){
-                            const vector<int> & counted_var_info = clearer[FAM][pred]["counted"][countedVars];
+					    for(size_t countedVars = 0 ; countedVars < clearer[FAM][pred][LFG_COUNTED].size() ; countedVars++){
+                            const vector<int> & counted_var_info = clearer[FAM][pred][LFG_COUNTED][countedVars];
                             int indexInPred = counted_var_info[0];
                             int countedVariableType = counted_var_info[2];
 
@@ -1066,8 +1113,8 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task) :
 									valid = false;
 							}
 						}
-                        for(size_t constants = 0 ; constants < clearer[FAM][pred]["const"].size() ; constants++){
-                            const vector<int> & const_info = clearer[FAM][pred]["const"][constants];
+                        for(size_t constants = 0 ; constants < clearer[FAM][pred][LFG_CONST].size() ; constants++){
+                            const vector<int> & const_info = clearer[FAM][pred][LFG_CONST][constants];
                             int indexInPred = const_info[0];
                             int objectFAM = const_info[1];
 
@@ -1117,8 +1164,8 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task) :
                         
 						for (const auto & [freeVar, freeVarType] : mutex_fixed_variable[FAM]){
                         	int thisFreeVarPosition = -1;
-							for(size_t freeVarInPred = 0 ; freeVarInPred < clearer[FAM][pred]["free"].size() ; freeVarInPred++){
-                            	int inPredVar = clearer[FAM][pred]["free"][freeVarInPred][1];
+							for(size_t freeVarInPred = 0 ; freeVarInPred < clearer[FAM][pred][LFG_FREE].size() ; freeVarInPred++){
+                            	int inPredVar = clearer[FAM][pred][LFG_FREE][freeVarInPred][1];
 								if (inPredVar == freeVar){
 									assert(thisFreeVarPosition == -1); // TODO hard assumption: free vars occur only once in literals
 									thisFreeVarPosition = freeVarInPred;
@@ -1126,8 +1173,8 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task) :
 							}
 							// can happen that the free variable is actually not mentioned in this predicate!
 							if (thisFreeVarPosition != -1){
-                            	int indexInPred = clearer[FAM][pred]["free"][thisFreeVarPosition][0];
-                            	int famVariableType = clearer[FAM][pred]["free"][thisFreeVarPosition][2];
+                            	int indexInPred = clearer[FAM][pred][LFG_FREE][thisFreeVarPosition][0];
+                            	int famVariableType = clearer[FAM][pred][LFG_FREE][thisFreeVarPosition][2];
                             	vector<int> objects;
 
 								int argumentType = typesOfArguments[indexInPred];
@@ -1158,8 +1205,8 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task) :
                         
 						// the counted variables and constants in the FAM group might not be compatible with the types of this precondition.
 						bool valid = true;
-					    for(size_t countedVars = 0 ; countedVars < clearer[FAM][pred]["counted"].size() ; countedVars++){
-                            const vector<int> & counted_var_info = clearer[FAM][pred]["counted"][countedVars];
+					    for(size_t countedVars = 0 ; countedVars < clearer[FAM][pred][LFG_COUNTED].size() ; countedVars++){
+                            const vector<int> & counted_var_info = clearer[FAM][pred][LFG_COUNTED][countedVars];
                             int indexInPred = counted_var_info[0];
                             int countedVariableType = counted_var_info[2];
 
@@ -1179,8 +1226,8 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task) :
 									valid = false;
 							}
 						}
-                        for(size_t constants = 0 ; constants < clearer[FAM][pred]["const"].size() ; constants++){
-                            const vector<int> & const_info = clearer[FAM][pred]["const"][constants];
+                        for(size_t constants = 0 ; constants < clearer[FAM][pred][LFG_CONST].size() ; constants++){
+                            const vector<int> & const_info = clearer[FAM][pred][LFG_CONST][constants];
                             int indexInPred = const_info[0];
                             int objectFAM = const_info[1];
 
@@ -1232,9 +1279,6 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task) :
             }
         }
     ); */
-    
-    //exit(0);
-    
     
     cout << "Selected mutexes :";
     for(size_t i = 0 ; i < selected_mutexes.size() ; i++){
@@ -1406,7 +1450,11 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
                     satTuple.push_back(pwlObjToSATObject[x]);
                     //satTupleTypes.push_back(types[pwlObjToSATObject[x]]);
                 }
-				int factIndex = all_facts_index[{pred, satTuple}];
+                int factIndex;
+                if ( all_facts_index.find({pred, satTuple}) !=  all_facts_index.end() )
+				    factIndex = all_facts_index[{pred, satTuple}];
+                else
+                    break;
                 if(uncovered_facts_set.count(factIndex)){
                     factsInInitialState.insert(factIndex);
                 }else{
@@ -1779,9 +1827,9 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
                             vector<int> leftImplication;
                             vector<int> rightImplication;
                             leftImplication.push_back(actionVar);
-                            for(size_t freeVars = 0 ; freeVars < clearer[key][predicate]["free"].size() ; freeVars++){
-								int freeVarPosition = clearer[key][predicate]["free"][freeVars][0];
-								int freeVarActual = clearer[key][predicate]["free"][freeVars][1];
+                            for(size_t freeVars = 0 ; freeVars < clearer[key][predicate][LFG_FREE].size() ; freeVars++){
+								int freeVarPosition = clearer[key][predicate][LFG_FREE][freeVars][0];
+								int freeVarActual = clearer[key][predicate][LFG_FREE][freeVars][1];
 								assert(freeVarPosition < translatePreconditionToGlobalArguments.size());
 								assert(freeVarPosition >= 0);
                                 int trltToGlobalIndex = translatePreconditionToGlobalArguments[freeVarPosition];
@@ -1796,8 +1844,8 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
                                 	leftImplication.push_back(parameterVarsTime[trltToGlobalIndex][val[grounding][freeVarActual]]);
 								}
                             }
-                            for(size_t countedVars = 0 ; countedVars < clearer[key][predicate]["counted"].size() ; countedVars++){
-                                const vector<int> & counted_var_info = clearer[key][predicate]["counted"][countedVars];
+                            for(size_t countedVars = 0 ; countedVars < clearer[key][predicate][LFG_COUNTED].size() ; countedVars++){
+                                const vector<int> & counted_var_info = clearer[key][predicate][LFG_COUNTED][countedVars];
                                 int trltToGlobalIndex = translatePreconditionToGlobalArguments[counted_var_info[0]];
                                 int countedVariableType = counted_var_info[2];
 								//cout << "FAM " << key << " " << mutexFDRSATVarsTime[key][val[grounding]].size() << " " << counted_var_info[1] << endl; 
@@ -1826,8 +1874,8 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
                                 	rightImplication.push_back(equals_var);
 								}
                             }
-                            for(size_t constants = 0 ; constants < clearer[key][predicate]["const"].size() ; constants++){
-                                const vector<int> & const_info = clearer[key][predicate]["const"][constants];
+                            for(size_t constants = 0 ; constants < clearer[key][predicate][LFG_CONST].size() ; constants++){
+                                const vector<int> & const_info = clearer[key][predicate][LFG_CONST][constants];
                                 int trltToGlobalIndex = translatePreconditionToGlobalArguments[const_info[0]];
                                 int object = const_info[1];
 							
@@ -1945,9 +1993,9 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
                                 
                                 negation.push_back(actionVar);
                                 leftImplication.push_back(actionVar);
-                                for(size_t freeVars = 0 ; freeVars < clearer[key][predicate]["free"].size() ; freeVars++){
-									int freeVarPosition = clearer[key][predicate]["free"][freeVars][0];
-									int freeVarActual = clearer[key][predicate]["free"][freeVars][1];
+                                for(size_t freeVars = 0 ; freeVars < clearer[key][predicate][LFG_FREE].size() ; freeVars++){
+									int freeVarPosition = clearer[key][predicate][LFG_FREE][freeVars][0];
+									int freeVarActual = clearer[key][predicate][LFG_FREE][freeVars][1];
 									assert(freeVarPosition < translateEffectToGlobalArguments.size());
 									assert(freeVarPosition >= 0);
                                 	int trltToGlobalIndex = translateEffectToGlobalArguments[freeVarPosition];
@@ -1964,8 +2012,8 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
 									}
 	
 								}
-                                for(size_t countedVars = 0 ; countedVars < clearer[key][predicate]["counted"].size() ; countedVars++){
-                                    const vector<int> & counted_var_info = clearer[key][predicate]["counted"][countedVars];
+                                for(size_t countedVars = 0 ; countedVars < clearer[key][predicate][LFG_COUNTED].size() ; countedVars++){
+                                    const vector<int> & counted_var_info = clearer[key][predicate][LFG_COUNTED][countedVars];
 									assert(counted_var_info.size() == 3);
 									assert(counted_var_info[0] < translateEffectToGlobalArguments.size());
                                     int trltToGlobalIndex = translateEffectToGlobalArguments[counted_var_info[0]];
@@ -2000,8 +2048,8 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
                                 	    leftImplication.push_back(equals_var_bef);
 									}
                                 }
-                            	for(size_t constants = 0 ; constants < clearer[key][predicate]["const"].size() ; constants++){
-                            	    const vector<int> & const_info = clearer[key][predicate]["const"][constants];
+                            	for(size_t constants = 0 ; constants < clearer[key][predicate][LFG_CONST].size() ; constants++){
+                            	    const vector<int> & const_info = clearer[key][predicate][LFG_CONST][constants];
 									assert(const_info.size() == 2);
 									assert(const_info[0] < translateEffectToGlobalArguments.size());
                             	    int trltToGlobalIndex = translateEffectToGlobalArguments[const_info[0]];
@@ -2088,9 +2136,9 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
                                 leftImplication.push_back(actionVar);
                             	
 
-                                for(size_t freeVars = 0 ; freeVars < clearer[key][predicate]["free"].size() ; freeVars++){
-                                   	int freeVarPosition = clearer[key][predicate]["free"][freeVars][0];
-									int freeVarActual = clearer[key][predicate]["free"][freeVars][1];
+                                for(size_t freeVars = 0 ; freeVars < clearer[key][predicate][LFG_FREE].size() ; freeVars++){
+                                   	int freeVarPosition = clearer[key][predicate][LFG_FREE][freeVars][0];
+									int freeVarActual = clearer[key][predicate][LFG_FREE][freeVars][1];
 									assert(freeVarPosition < translateEffectToGlobalArguments.size());
 									assert(freeVarPosition >= 0);
                                 	int trltToGlobalIndex = translateEffectToGlobalArguments[freeVarPosition];
@@ -2107,8 +2155,8 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
                                 		leftImplication.push_back(parameterVarsTime[trltToGlobalIndex][val[grounding][freeVarActual]]);
 									}
                                 }
-                                for(size_t countedVars = 0 ; countedVars < clearer[key][predicate]["counted"].size() ; countedVars++){
-                                    const vector<int> & counted_var_info = clearer[key][predicate]["counted"][countedVars];
+                                for(size_t countedVars = 0 ; countedVars < clearer[key][predicate][LFG_COUNTED].size() ; countedVars++){
+                                    const vector<int> & counted_var_info = clearer[key][predicate][LFG_COUNTED][countedVars];
 									assert(counted_var_info.size() == 3);
 									assert(counted_var_info[0] < translateEffectToGlobalArguments.size());
                                     int trltToGlobalIndex = translateEffectToGlobalArguments[counted_var_info[0]];
@@ -2143,8 +2191,8 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
 										rightImplicationCauseVariables.push_back({causeVariable,equals_var});
 									}
                                 }
-                            	for(size_t constants = 0 ; constants < clearer[key][predicate]["const"].size() ; constants++){
-                            	    const vector<int> & const_info = clearer[key][predicate]["const"][constants];
+                            	for(size_t constants = 0 ; constants < clearer[key][predicate][LFG_CONST].size() ; constants++){
+                            	    const vector<int> & const_info = clearer[key][predicate][LFG_CONST][constants];
 									assert(const_info.size() == 2);
 									assert(const_info[0] < translateEffectToGlobalArguments.size());
                             	    int trltToGlobalIndex = translateEffectToGlobalArguments[const_info[0]];
