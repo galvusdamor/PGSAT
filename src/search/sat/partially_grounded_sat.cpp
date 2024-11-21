@@ -76,10 +76,12 @@ vector<vector<int>> getCombinations(const vector<vector<int>>& input) {
 bool is_mutex_group_contained_in_assignement(pddl_lifted_mgroup_t * m1, pddl_lifted_mgroup_t *m2, std::vector<int> & m1VarTom2Var, std::vector<bool> & m2VarAssigned, pddl_t * pddl, int pos = 0){
 
 	if (pos == m1VarTom2Var.size()){
-		DEBUG(std::cout << "Assignment:";
-		for (size_t m1V = 0; m1V < m1VarTom2Var.size(); m1V++)
-			std::cout << " " << m1V << " -> " << m1VarTom2Var[m1V];
-		std::cout << std::endl;);
+		DEBUG(
+            std::cout << "Assignment:";
+            for (size_t m1V = 0; m1V < m1VarTom2Var.size(); m1V++)
+                std::cout << " " << m1V << " -> " << m1VarTom2Var[m1V];
+            std::cout << std::endl;
+        );
 
 
 		// we have to search for every condition in m1 a mirror partner in m2
@@ -289,8 +291,8 @@ int PartiallyGroundedSAT::get_different_var(void* solver, sat_capsule & capsule,
 }
 
 
-PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task) :
-    BaseSATEncoding(task){
+PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task, bool _binary_encoding) :
+    BaseSATEncoding(task), binary_encoding(_binary_encoding){
     _start=clock();
     
     cout << "Entering PG SAT" << endl;
@@ -536,8 +538,8 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task) :
         pddl->pred.pred[i].write = pddl_true;
     } */
 
-    //pddlPrintPDDLDomain(pddl,stdout);
-    //pddlPrintPDDLProblem(pddl,stdout);
+    pddlPrintPDDLDomain(pddl,stdout);
+    pddlPrintPDDLProblem(pddl,stdout);
 
     pddl_lifted_mgroups_infer_limits_t limits = PDDL_LIFTED_MGROUPS_INFER_LIMITS_INIT;
 	limits.max_candidates = 10000;
@@ -781,6 +783,7 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task) :
 
     DEBUG(
         cout << "Special Goals : \n";
+        if(specialGoals.empty()) cout << "No special goals\n";
         for (auto const& [key, val] : specialGoals){
             cout << "Predicate : "<< key << endl;
             for(size_t grounding = 0 ; grounding < specialGoals[key].size() ; grounding++){
@@ -799,7 +802,7 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task) :
         if (task.predicates[predicates].getName().rfind("type@", 0) == 0) continue;
 		if (task.predicates[predicates].getName().rfind("=", 0) == 0) continue;
         if (task.predicates[predicates].isStaticPredicate()) continue;
-        if( specialGoals.find(predicates) != specialGoals.end() ){//CHECK WITH GREGOR IF PREDICATES INDEX ALWAYS MATCHES ID
+        if( specialGoals.find(predicates) != specialGoals.end() ){
             for(size_t grounding = 0 ; grounding < specialGoals[predicates].size() ; grounding++){
                 all_facts.push_back({predicates, specialGoals[predicates][grounding]});
             }
@@ -976,7 +979,37 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task) :
 
         }
     }
+    set<int> activeMutexes;
+    for (size_t i = 0; i < task.initial_state.get_relations().size(); i++) {
+        auto rel = task.initial_state.get_relations()[i];
+        if (task.predicates[task.initial_state.get_relations()[i].predicate_symbol].getName().rfind("type@", 0) == 0) continue;
+        if (task.predicates[task.initial_state.get_relations()[i].predicate_symbol].getName().rfind("=", 0) == 0) continue;
+        auto tuple = task.initial_state.get_tuples_of_relation(i);
+        int pred = task.initial_state.get_relations()[i].predicate_symbol;
+        for (vector<int> groundA: tuple) {
+            vector<int> SATObjects;
+            for (size_t ai = 0; ai < groundA.size(); ++ai) {
+                SATObjects.push_back(pwlObjToSATObject[groundA[ai]]);
+            }
+            int fact;
+            if ( all_facts_index.find({pred, SATObjects}) !=  all_facts_index.end() )
+                fact = all_facts_index[{pred, SATObjects}];
+            else
+                continue;
+            vector<int> vecOfMutexes = fact_to_mutexes[fact];
+            for(size_t m = 0; m < vecOfMutexes.size(); ++m){
+                activeMutexes.insert(vecOfMutexes[m]);
+            }
+        }
+    }
 
+    for(size_t selected_mutex = 0 ; selected_mutex < selected_mutexes.size() ; selected_mutex++){
+        if (activeMutexes.find(selected_mutexes[selected_mutex]) == activeMutexes.end()) {
+            inactiveMutexes.push_back(selected_mutexes[selected_mutex]);
+        }
+    }
+
+    //std::map<int,std::map<std::vector<int>, std::vector<std::vector<int>>>> mutexFDRVars; {FAM -> {[freeGroundings] : [countedVarID][countedVar]}}
     for(size_t selected_mutex = 0 ; selected_mutex < selected_mutexes.size() ; selected_mutex++){
         pair<int, vector<int>> mutex = fam_based_mutexes[selected_mutexes[selected_mutex]];
         mutexFDRVars[mutex.first][mutex.second].size();
@@ -1025,6 +1058,7 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task) :
     ); */
 
     //map<int, map<int, vector<map<string, vector<vector<int>>>>>> clearer
+    //std::map<int, std::map<std::vector<int>, std::map<int, std::vector<std::vector<int>>>>> idek;
     idek.clear();//pred -> {[typesOfArguments] -> {Fam -> {[[allFreeGroundings]]}}}
     for(size_t actions = 0 ; actions < task.actions.size() ; actions++){
         for(size_t preconditions = 0 ; preconditions < task.actions[actions].get_precondition().size() ; preconditions++){
@@ -1353,6 +1387,12 @@ map<int, map<vector<int>, vector<vector<int>>>> PartiallyGroundedSAT::generateFA
             mutexFDRSATVarsTime[FAM][key].size();
             for(size_t num_vec = 0 ; num_vec < mutexFDRVars[FAM][key].size() ; num_vec++){
                 mutexFDRSATVarsTime[FAM][key].push_back(vector<int>());
+
+                if (binary_encoding){
+
+
+                } else {
+
                 for(size_t objs = 0 ; objs < mutexFDRVars[FAM][key][num_vec].size() ; objs++){
                     int groundedCountedObjectVar = capsule.new_variable();
                     mutexFDRSATVarsTime[FAM][key][num_vec].push_back(groundedCountedObjectVar);
@@ -1372,8 +1412,21 @@ map<int, map<vector<int>, vector<vector<int>>>> PartiallyGroundedSAT::generateFA
 					);
                 }
                 atMostOne(solver, capsule, mutexFDRSATVarsTime[FAM][key][num_vec]);
+                }
             }
         }
+    }
+    for(size_t im = 0 ; im < inactiveMutexes.size() ; im++){
+        cout << "Im gonna set shit to false!!!!!!!\n";
+        int fam = fam_based_mutexes[inactiveMutexes[im]].first;
+        vector<int> fg = fam_based_mutexes[inactiveMutexes[im]].second;
+        vector<vector<int>> cv = mutexFDRSATVarsTime[fam][fg];
+        for(size_t param_id = 0 ; param_id < cv.size()-1 ; param_id++){
+            for(size_t v = 0 ; v < cv[param_id].size() ; v++){
+                assertNot(solver, cv[param_id][v]);
+            }
+        }
+        assertYes(solver, cv.back().back());
     }
     return mutexFDRSATVarsTime;
 }
@@ -1454,7 +1507,7 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
                 if ( all_facts_index.find({pred, satTuple}) !=  all_facts_index.end() )
 				    factIndex = all_facts_index[{pred, satTuple}];
                 else
-                    break;
+                    continue;
                 if(uncovered_facts_set.count(factIndex)){
                     factsInInitialState.insert(factIndex);
                 }else{

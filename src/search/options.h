@@ -20,6 +20,7 @@ class Options {
 	int timelimit;
 	bool structure;
 	bool optimal;
+    bool binary;
 	bool incremental;
 
 public:
@@ -40,6 +41,7 @@ public:
             ("optimal,o", "Run the SAT planner in optimal mode")
             ("noStructure,S", "Run SAT linear without structure inference")
             ("incremental,i", "Run the SAT planner in incremenal mode. ATTENTION: this is not supported by all SAT solvers")
+            ("binary,b", "Binary encoding for counted vars")
             ;
 
         po::variables_map vm;
@@ -69,6 +71,7 @@ public:
         width = vm["width"].as<int>();
        	timelimit = vm["timelimit"].as<int>();
         optimal = vm.count("optimal");
+        binary = vm.count("binary");
         structure = !vm.count("noStructure");
         incremental = vm.count("incremental");
     }
@@ -119,6 +122,10 @@ public:
 
     unsigned int get_optimal() const {
         return optimal;
+    }
+
+    unsigned int get_binary() const {
+        return binary;
     }
 
     unsigned int get_incremental() const {

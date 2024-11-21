@@ -27,6 +27,8 @@ class PartiallyGroundedSAT : public BaseSATEncoding{
     };
 
 private:
+    bool binary_encoding;
+
     std::vector<std::pair<int, std::vector<int>>> all_facts;
     std::map<std::pair<int, std::vector<int>>,int> all_facts_index;
     
@@ -36,6 +38,7 @@ private:
 	std::unordered_map<int,int> lower_predicate_index_in_uncovered;
 	std::map<int, std::vector<std::pair<int,std::vector<int>>>> fact_to_mutexes_with_counted_info;
 	std::vector<std::pair<int, std::vector<int>>> fam_based_mutexes;
+    std::vector<int> inactiveMutexes;
 
     std::vector<std::string> factToString;
     std::map<int, std::map<int, std::map<LFG_VAR_TYPES, std::vector<std::vector<int>>>>> clearer;
@@ -59,7 +62,7 @@ private:
 	std::map<std::string,double> timings;
     std::clock_t _start;
 public:
-    PartiallyGroundedSAT(const Task& task);
+    PartiallyGroundedSAT(const Task& task, bool _binary_encoding);
 	utils::ExitCode solve(const Task& task, int limit, bool optimal, bool incremental);
 };
 
