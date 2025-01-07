@@ -9,7 +9,7 @@ from shutil import copytree
 
 PROJECT_ROOT = os.path.dirname(os.path.realpath(__file__))
 TRANSLATOR_DIR = os.path.join(PROJECT_ROOT, 'src', 'translator')
-
+REWRITE_FILE = os.path.join(PROJECT_ROOT, 'src', 'parsePWLoutput.cpp')
 SEARCH_DIR = os.path.join(PROJECT_ROOT, 'src', 'search')
 
 def parse_arguments():
@@ -36,6 +36,7 @@ def create_dir(path):
 def build(debug_flag, sat, cpddl, ipasir):
     BUILD_DIR = get_build_dir(debug_flag)
     BUILD_SEARCH_DIR = os.path.join(BUILD_DIR, 'search')
+    BUILD_DIR_REWRITE = os.path.join(BUILD_DIR, 'rewrite')
     if debug_flag:
         BUILD_TYPE = 'Debug'
     else:
@@ -43,6 +44,9 @@ def build(debug_flag, sat, cpddl, ipasir):
     create_dir(BUILD_DIR)
     create_dir(BUILD_SEARCH_DIR)
     copy_tree(TRANSLATOR_DIR, BUILD_DIR + '/translator')
+
+    subprocess.check_call(["g++", REWRITE_FILE, "-O2", "-o", BUILD_DIR_REWRITE])
+
     cmakeArguments = ['cmake', SEARCH_DIR, '-DCMAKE_BUILD_TYPE='+BUILD_TYPE]
     if sat != 'none':
         cmakeArguments.append('-DSAT=ON')

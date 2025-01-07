@@ -180,6 +180,7 @@ void BaseSATEncoding::computedirectParents(){
 		} else if (parents[type].size() == 1){
 			directparents[type] = *(parents[type].begin());
 		} else {
+            for (auto p : parents[type]) cout << "Parent: " << p << endl;
 			cout << "Type " << type << " has multiple direct parents ... this is impossbile." << endl;
    			exit_with(utils::ExitCode::SEARCH_UNSUPPORTED);
 		}

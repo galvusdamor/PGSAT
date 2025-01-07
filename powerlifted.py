@@ -150,11 +150,14 @@ def main():
                      options.domain, options.instance, '--output-file', options.translator_file] + \
                     PYTHON_EXTRA_OPTIONS)
 
+    subprocess.call([os.path.join(build_dir, 'rewrite'),
+                     options.translator_file, options.translator_file + ".typed"])           
+
 
     if options.search != 'sat' and options.search != 'linear' and options.search != "pgsat":
         # Invoke the C++ search component
         cmd = [os.path.join(build_dir, 'search', 'search'),
-               '-f', options.translator_file,
+               '-f', options.translator_file + ".typed",
                '-s', options.search,
                '-e', options.heuristic,
                '-g', options.generator,
@@ -164,7 +167,7 @@ def main():
         # Invoke the C++ search component
         cmd = [#'valgrind', 
                os.path.join(build_dir, 'search', 'search'),
-               '-f', options.translator_file,
+               '-f', options.translator_file + ".typed",
                '-s', options.search,
                '-l', str(options.planLength),
                '-w', str(options.width),

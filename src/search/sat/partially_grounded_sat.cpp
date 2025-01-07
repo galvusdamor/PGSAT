@@ -608,6 +608,9 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task, bool _binary_encod
         for (int j = 0; j < (lifted_mgroups.mgroup + i)->cond.size; j++){
             const pddl_fm_atom_t *atom = pddlFmToAtomConst((lifted_mgroups.mgroup + i)->cond.fm[j]);
             map<LFG_VAR_TYPES, vector<vector<int>>> aux;
+            aux[LFG_COUNTED].clear();
+            aux[LFG_FREE].clear();
+            aux[LFG_CONST].clear();
             for (int k = 0; k < atom->arg_size; k++){
                 if (atom->arg[k].param >= 0){
                     int param_id = atom->arg[k].param;
@@ -710,7 +713,9 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task, bool _binary_encod
 
     cout << "Total num mutexes : " << total_groups << endl;
 
+    map<int, pair<int,int>> FAMRange;
     for(int fam = 0 ; fam < mutex_fixed_variable.size() ; fam++){
+        int lowerRange = fam_based_mutexes.size();
         if(mutex_fixed_variable[fam].size() >= 2){
             auto it = mutex_fixed_variable[fam].begin();
             pair<int, int> p1 = *it;
@@ -749,7 +754,15 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task, bool _binary_encod
         }else if(mutex_fixed_variable[fam].size() == 0){
             fam_based_mutexes.push_back({fam, {}});
         }
+        int upperRange = fam_based_mutexes.size();
+        FAMRange[fam] = {lowerRange, upperRange-1};
     }
+
+    DEBUG(
+        for(auto const& [key, val] : FAMRange){
+            cout << "FAM : " << key << " , lowerbound : " << val.first << "; upperbound : " << val.second << endl;
+        }
+    );
 
     cout << fam_based_mutexes.size() << endl;
 
@@ -797,11 +810,60 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task, bool _binary_encod
         }
     );
 
+    set<int> coveredPredicates;
+    map<int, vector<int>> predicatesToFAM;
+    map<int, vector<int>> FAMToPredicates;
+    //clearer.clear();//{FAM -> {predicates -> [freeOrCounted][index, param_id, type]}} std::map<int, std::map<int, std::map<LFG_VAR_TYPES, std::vector<std::vector<int>>>>> clearer;
+    for(size_t predicates = 0 ;  predicates < task.predicates.size() ; predicates++){
+        if (task.predicates[predicates].getName().rfind("type@", 0) == 0) continue;
+		if (task.predicates[predicates].getName().rfind("=", 0) == 0) continue;
+        if (task.predicates[predicates].isStaticPredicate()) continue;
+        vector<int> argTypes = task.predicates[predicates].getTypes();
+        for (auto const& [FAM, mapOfPredicates] : clearer){
+            bool matching = true;
+            bool skipping = true;
+            for (auto const& [pred, mapOfVars] : mapOfPredicates){
+                if (pred != predicates || mapOfVars.count(LFG_CONST)){ /* skipping = true; */ continue;}
+                skipping = false;
+                for(size_t args = 0 ; args < mapOfVars.at(LFG_FREE).size() ; args++){
+                    if(mapOfVars.at(LFG_FREE)[args][2] != argTypes[mapOfVars.at(LFG_FREE)[args][0]]){
+                        cout << FAM << " : " << pred <<  " : AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA!!!!!!!!!!!!!!\n";
+                        matching = false;
+                        break;
+                    }
+                }
+                for(size_t args = 0 ; args < mapOfVars.at(LFG_COUNTED).size() ; args++){
+                    if(mapOfVars.at(LFG_COUNTED)[args][2] != argTypes[mapOfVars.at(LFG_COUNTED)[args][0]] || !matching){
+                        cout << FAM << " : " << pred << " : AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA2!!!!!!!!!!!!!!\n";
+                        matching = false;
+                        break;
+                    }
+                }
+            }
+            if(matching && !skipping){
+                coveredPredicates.insert(predicates);
+                predicatesToFAM[predicates].push_back(FAM);
+                FAMToPredicates[FAM].push_back(predicates);
+            }
+        }
+    }
+
+    DEBUG(
+        for(auto const& [key, val] : FAMToPredicates){
+            cout << "FAM : " << key << "\n\tPreds :";
+            for(size_t preds = 0 ; preds < val.size() ; preds++){
+                cout << " " << val[preds];
+            }
+            cout << endl;
+        }
+    );
+
     /* map<pair<int, vector<int>>,int> all_facts_index; */
     for(size_t predicates = 0 ;  predicates < task.predicates.size() ; predicates++){
         if (task.predicates[predicates].getName().rfind("type@", 0) == 0) continue;
 		if (task.predicates[predicates].getName().rfind("=", 0) == 0) continue;
         if (task.predicates[predicates].isStaticPredicate()) continue;
+        if (coveredPredicates.find(predicates) != coveredPredicates.end()) continue;
         if( specialGoals.find(predicates) != specialGoals.end() ){
             for(size_t grounding = 0 ; grounding < specialGoals[predicates].size() ; grounding++){
                 all_facts.push_back({predicates, specialGoals[predicates][grounding]});
@@ -979,6 +1041,35 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task, bool _binary_encod
 
         }
     }
+
+    //map<int, vector<int>> predicatesToFAM;
+    //map<int, vector<int>> FAMToPredicates;
+    set<int> convenientlySelectedPredicates;
+    set<int> selectedFAMS;
+    for(auto const& pred : predicatesToFAM){
+        if( convenientlySelectedPredicates.find(pred.first) != convenientlySelectedPredicates.end() ) continue;
+        int max = 0;
+        int selectedFAM = -1;
+        for(size_t FAMS = 0 ; FAMS < pred.second.size() ; FAMS++){
+            if(FAMToPredicates[pred.second[FAMS]].size() > max){
+                max = FAMToPredicates[pred.second[FAMS]].size();
+                selectedFAM = pred.second[FAMS];
+            }
+        }
+        assert(selectedFAM != -1);
+        selectedFAMS.insert(selectedFAM);
+        for(size_t p = 0 ; p < FAMToPredicates[selectedFAM].size() ; p++){
+            convenientlySelectedPredicates.insert(FAMToPredicates[selectedFAM][p]);
+        }
+    }
+
+    for (const int &FAM : selectedFAMS){
+        for(int i = FAMRange[FAM].first ; i <= FAMRange[FAM].second ; i++){
+            if (std::find(selected_mutexes.begin(), selected_mutexes.end(), i) == selected_mutexes.end())
+                selected_mutexes.push_back(i);
+        }
+    }
+
     set<int> activeMutexes;
     for (size_t i = 0; i < task.initial_state.get_relations().size(); i++) {
         auto rel = task.initial_state.get_relations()[i];
@@ -994,6 +1085,27 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task, bool _binary_encod
             int fact;
             if ( all_facts_index.find({pred, SATObjects}) !=  all_facts_index.end() )
                 fact = all_facts_index[{pred, SATObjects}];
+            else if ( coveredPredicates.find(pred) != coveredPredicates.end() ){
+                for(size_t fams = 0 ; fams < predicatesToFAM[pred].size() ; fams++){
+                    if( selectedFAMS.find(predicatesToFAM[pred][fams]) != selectedFAMS.end() ){
+                        for(int lower = FAMRange[predicatesToFAM[pred][fams]].first ; lower <=  FAMRange[predicatesToFAM[pred][fams]].second ; lower++){
+                            bool matchingFreeVars = true;
+                            for(size_t var = 0 ; var < clearer[predicatesToFAM[pred][fams]][pred][LFG_FREE].size() ; var++){
+                                int fv_index = clearer[predicatesToFAM[pred][fams]][pred][LFG_FREE][var][INDEX];
+                                int fv_paramId = clearer[predicatesToFAM[pred][fams]][pred][LFG_FREE][var][PARAM_ID];
+                                if(SATObjects[fv_index] != fam_based_mutexes[lower].second[fv_paramId]){
+                                    matchingFreeVars = false;
+                                    break;
+                                }
+                            }
+                            //CHECK IF FREE VARIABLES MATCH
+                            if(matchingFreeVars){
+                                activeMutexes.insert(lower);
+                            }
+                        }
+                    }
+                }
+            }
             else
                 continue;
             vector<int> vecOfMutexes = fact_to_mutexes[fact];
@@ -1010,6 +1122,7 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task, bool _binary_encod
     }
 
     //std::map<int,std::map<std::vector<int>, std::vector<std::vector<int>>>> mutexFDRVars; {FAM -> {[freeGroundings] : [countedVarID][countedVar]}}
+
     for(size_t selected_mutex = 0 ; selected_mutex < selected_mutexes.size() ; selected_mutex++){
         pair<int, vector<int>> mutex = fam_based_mutexes[selected_mutexes[selected_mutex]];
         mutexFDRVars[mutex.first][mutex.second].size();
@@ -1034,11 +1147,11 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task, bool _binary_encod
     }
 
 
-     /* DEBUG(
+     DEBUG(
         cout << "---------------FDR variables data structure : --------------------\n";
         for(auto const & [FAM, groundings] : mutexFDRVars){
             cout << "FAM number : " << FAM << endl;
-            for(auto const& [key, val] : mutexFDRVars[FAM]){
+            for(auto const& [key, val] : groundings){
                 cout << "\tGrounded Free Vars :";
                 for(size_t gfv = 0 ; gfv < key.size() ; gfv++){
                     cout << " " << key[gfv];
@@ -1055,7 +1168,7 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task, bool _binary_encod
                 cout << ">\n";
             }
         }
-    ); */
+    );
 
     //map<int, map<int, vector<map<string, vector<vector<int>>>>>> clearer
     //std::map<int, std::map<std::vector<int>, std::map<int, std::vector<std::vector<int>>>>> idek;
@@ -1379,6 +1492,7 @@ vector<int> PartiallyGroundedSAT::generateFactVars(sat_capsule & capsule, int ti
 
 	return mutexPredicateVarsTime;
 }
+
 map<int, map<vector<int>, vector<vector<int>>>> PartiallyGroundedSAT::generateFAMVars(void* solver, sat_capsule & capsule, int timestep){
     map<int, map<vector<int>, vector<vector<int>>>> mutexFDRSATVarsTime;
 	cout << "mutexFDRVars " << mutexFDRVars.size() << endl;
@@ -1498,10 +1612,8 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
             for (vector<int> groundA: tuple) {
                 int pred = rel.predicate_symbol;
                 vector<int> satTuple;
-                vector<int> satTupleTypes;
                 for(int x : groundA){
                     satTuple.push_back(pwlObjToSATObject[x]);
-                    //satTupleTypes.push_back(types[pwlObjToSATObject[x]]);
                 }
                 int factIndex;
                 if ( all_facts_index.find({pred, satTuple}) !=  all_facts_index.end() )
