@@ -42,6 +42,8 @@ def parse_options():
     parser.add_argument('-S', '--noStructure', action="store_true", help="disable structure inference for linear SAT planner")
     parser.add_argument('-t', '--timelimit', action="store", help="Time limit for the SAT splanner in seconds", default=60*30) # default is 30 minutes
     parser.add_argument('-I', '--incremental', action="store_true", help="Run the SAT planner in incremental mode\nATTENTION: this is not supported by all SAT solvers.")
+    parser.add_argument('-b', '--binary', action="store_true", help="Binary encoding for counted vars")
+    parser.add_argument('-F', '--nofam', action="store_true", help="Disable generation of FAM groups")
     parser.add_argument('--translator-output-file', dest='translator_file',
                         default='output.lifted',
                         help='Output file of the translator')
@@ -179,6 +181,10 @@ def main():
             cmd.append('-o')
         if options.incremental:
             cmd.append('-i')
+        if options.binary:
+            cmd.append('-b')
+        if options.nofam:
+            cmd.append('-F')                    
 
     cmd = cmd + \
                CPP_EXTRA_OPTIONS

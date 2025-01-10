@@ -291,8 +291,8 @@ int PartiallyGroundedSAT::get_different_var(void* solver, sat_capsule & capsule,
 }
 
 
-PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task, bool _binary_encoding) :
-    BaseSATEncoding(task), binary_encoding(_binary_encoding){
+PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task, bool _binary_encoding, bool _no_fam_groups) :
+    BaseSATEncoding(task), binary_encoding(_binary_encoding), no_fam_groups(_no_fam_groups){
     _start=clock();
     
     cout << "Entering PG SAT" << endl;
@@ -534,9 +534,6 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task, bool _binary_encod
     pddlResetPredReadWrite(pddl);
 	// Normalize pddl, i.e. remove stuff and so on
 	pddlNormalize(pddl, NULL);
-    /* for(int i = 0 ; i < pddl->pred.pred_size ; i++){
-        pddl->pred.pred[i].write = pddl_true;
-    } */
 
     pddlPrintPDDLDomain(pddl,stdout);
     pddlPrintPDDLProblem(pddl,stdout);
@@ -550,7 +547,7 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task, bool _binary_encod
     err.log_out = stdout;
 	//if (!config.quietMode)
 		std::cout << "Computing Lifted FAM-Groups [Fiser, AAAI 2020]" << std::endl;
-	pddlLiftedMGroupsInferFAMGroups(pddl, &limits, &lifted_mgroups, &err);
+	if (!no_fam_groups) pddlLiftedMGroupsInferFAMGroups(pddl, &limits, &lifted_mgroups, &err);
     
 
 	//if (!config.quietMode)

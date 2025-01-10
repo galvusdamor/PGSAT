@@ -21,6 +21,7 @@ class Options {
 	bool structure;
 	bool optimal;
     bool binary;
+    bool nofam;
 	bool incremental;
 
 public:
@@ -42,6 +43,7 @@ public:
             ("noStructure,S", "Run SAT linear without structure inference")
             ("incremental,i", "Run the SAT planner in incremenal mode. ATTENTION: this is not supported by all SAT solvers")
             ("binary,b", "Binary encoding for counted vars")
+            ("nofam,F", "Disable generation of FAM groups")
             ;
 
         po::variables_map vm;
@@ -72,6 +74,7 @@ public:
        	timelimit = vm["timelimit"].as<int>();
         optimal = vm.count("optimal");
         binary = vm.count("binary");
+        nofam = vm.count("nofam");
         structure = !vm.count("noStructure");
         incremental = vm.count("incremental");
     }
@@ -126,6 +129,10 @@ public:
 
     unsigned int get_binary() const {
         return binary;
+    }
+
+    unsigned int get_nofam() const {
+        return nofam;
     }
 
     unsigned int get_incremental() const {
