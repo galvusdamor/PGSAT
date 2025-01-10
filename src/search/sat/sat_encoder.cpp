@@ -432,7 +432,6 @@ void bitNumberIsAtMost(void* solver, const std::vector<int> & bits, int value){
 void bitNumberIsAtLeast(void* solver, const std::vector<int> & bits, int value){
 	std::vector<int> prefix;
 	for (int bit = bits.size() - 1; bit >= 0; bit--){
-		std::cout << "Bit " << bit << std::endl;
 		// if bit in value is 1 and the prefix so far is identical, then the bit in bits must also be one
 		if (((1 << bit) & value) == 1){
 			for (int b : prefix) ipasir_add(solver, -b);

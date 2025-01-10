@@ -69,6 +69,18 @@ private:
     
 	std::map<std::string,double> timings;
     std::clock_t _start;
+
+
+	const bool debug_no_goal = false;
+	const bool debug_no_init = false;
+	const bool debug_no_action = false;
+	const bool debug_no_pre = false;
+	const bool debug_no_eff = false;
+	const bool debug_no_del_eff = false;
+	const bool debug_no_add_eff = false;
+	const bool debug_no_frame = false;
+	const bool debug_no_equal_vars = false;
+	const bool debug_no_parameter_binaries = false;
 public:
     PartiallyGroundedSAT(const Task& task, bool _binary_encoding, bool _no_fam_groups, bool _no_goal_pruning);
 	utils::ExitCode solve(const Task& task, int limit, bool optimal, bool incremental);

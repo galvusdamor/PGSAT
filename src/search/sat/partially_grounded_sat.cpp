@@ -223,8 +223,10 @@ const vector<int> PartiallyGroundedSAT::get_binary_paramter_var(void* solver, sa
 	for(int object = lowerTypeindex[typeOfArgument[action_argument_position]] ; object <= upperTypeindex[typeOfArgument[action_argument_position]] ; object++){
 		const vector<int> thisBits = bitNumberExtract(bits,object);
 		int objectVar =  parameterVars[action_argument_position].at(object);
-		for (const int b : thisBits)
+		for (const int b : thisBits){
+			if (debug_no_parameter_binaries) continue;
 			implies(solver, objectVar, b);
+		}
 	}
 
 	generatedBinaryParameterVars[time_action][action_argument_position] = bits;
@@ -239,6 +241,7 @@ int PartiallyGroundedSAT::get_equals_var(void* solver, sat_capsule & capsule, in
         return equals_var_map[time_action][time_state][action_argument_position][FAM_group][param_id][counted_var][free_variable_grounding];
 
     int newVar = capsule.new_variable();
+	DEBUG(capsule.registerVariable(newVar,"equals_var"));
     // registering
     equals_var_map[time_action][time_state][action_argument_position][FAM_group][param_id][counted_var][free_variable_grounding] = newVar;
 
@@ -254,14 +257,24 @@ int PartiallyGroundedSAT::get_equals_var(void* solver, sat_capsule & capsule, in
 	} else {
 		const vector<int> parameterBinaryVars = get_binary_paramter_var(solver, capsule, time_action, action_argument_position, parameterVars);
 		assert(parameterBinaryVars.size() == counted_var_objects.size());
+		
+		vector<int> bitEqualsVars;
 		for (size_t bit = 0; bit < counted_var_objects.size(); bit++){
 			int paramBit = parameterBinaryVars[bit];
 			int countedBit = counted_var_objects[bit];
+			if (debug_no_equal_vars) continue;
 			// newVar captures equality between the bits
 			andImplies(solver,newVar,paramBit,countedBit);
 			andImplies(solver,newVar,countedBit,paramBit);
-			andImplies(solver,countedBit,paramBit,newVar);
+    		int bitequal = capsule.new_variable();
+			DEBUG(capsule.registerVariable(bitequal,"bit_equals_var" + to_string(bit)));
+			andImplies(solver,countedBit,paramBit,bitequal);
+			andImplies(solver,-countedBit,-paramBit,bitequal);
+			bitEqualsVars.push_back(bitequal);
 		}
+
+		// assert that if all the bits are true, then newVar is true
+		andImplies(solver,bitEqualsVars,newVar);
 	}
 
     return newVar;
@@ -1622,6 +1635,7 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
     for (int timesteps = lowerLength; timesteps <= upperLength; timesteps++){
         map<string,int> clauseCounter;
 		equals_var_map.clear();
+		generatedBinaryParameterVars.clear();
 		countedOfType.clear();
 
         void* solver = ipasir_init();
@@ -1670,6 +1684,7 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
         // one for every mutex should be true
         set<int> factsInInitialState;
         for (size_t i = 0; i < task.initial_state.get_relations().size(); i++) {
+			if (debug_no_init) continue;
             auto rel = task.initial_state.get_relations()[i];
             auto tuple = task.initial_state.get_tuples_of_relation(i);
             for (vector<int> groundA: tuple) {
@@ -1973,8 +1988,6 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
                     } 
                 }
             }
-            atLeastOne(solver, capsule, actionVarsTime);
-
             actionVars.push_back(actionVarsTime);
 
  
@@ -2007,6 +2020,7 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
                 //std::map<int, std::map<int, int>> translatePreconditionToGlobalArguments;
                 const auto precs = task.actions[action].get_precondition();
                 for (size_t prec = 0; prec < precs.size(); prec++) {
+					if (debug_no_pre) continue;
                     //DEBUG(cout << "\t\tprecondition #" << prec << " " << precs.size() << endl);
                     const auto & precObjec = precs[prec];
                     int predicate = precObjec.predicate_symbol;
@@ -2176,6 +2190,7 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
 
                 const auto effs = task.actions[action].get_effects();
                 for (size_t eff = 0; eff < effs.size(); eff++) {
+					if (debug_no_eff) continue;
                     //DEBUG(cout << "\t\teffect #" << eff  << " " << effs.size() << endl);
                     
                     const auto & effObjec = effs[eff];
@@ -2209,6 +2224,7 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
 					int lowerIndexGroundedPredicate = lower_predicate_index_in_uncovered[effObjec.predicate_symbol];
 
                     if (effObjec.negated){
+						if (debug_no_del_eff) continue;
                         // deleting effect
                         map<int, vector<vector<int>>> correspondingFAMs = idek[predicate][typesOfPredicate];
                         for(auto const& [key, val] : correspondingFAMs){
@@ -2355,6 +2371,7 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
 
                         }
                     } else {
+						if (debug_no_add_eff) continue;
                         // adding effects
 						map<int, vector<vector<int>>> correspondingFAMs = idek[predicate][typesOfPredicate];
                         for(auto const& [key, val] : correspondingFAMs){
@@ -2560,7 +2577,7 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
             
 		
 			for (const auto & [fam, _fam] : mutexFDRSATVarsNextTime){
-				//continue;
+				if (debug_no_frame) continue;
 				for (const auto & [free_grounding, counted_groundings] : _fam){
 					for (size_t counted = 0; counted < counted_groundings.size(); counted++){
 						if (counted != counted_groundings.size() - 1){
@@ -2605,7 +2622,8 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
 
 
             atMostOne(solver,capsule,actionVarsTime);
-             if (limit == -1) atLeastOne(solver,capsule,actionVarsTime);
+            if (limit == -1 && !debug_no_action) atLeastOne(solver,capsule,actionVarsTime);
+            //if (!debug_no_action) atLeastOne(solver,capsule,actionVarsTime);
             clauseNumber(oneAction);
 
             swap(previousTimeMutexPredicateVars,currentTimeMutexPredicateVars);
@@ -2615,7 +2633,7 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
         // assert that the goal is true. This should reference the previousTimeMutexPredicateVars
         vector<int> factsInGoalState;
         for (size_t goal = 0; goal < task.goal.goal.size(); goal++){
-            //continue;
+            if (debug_no_goal) continue;
             const AtomicGoal & goalAtom = task.goal.goal[goal];
             //pddl_fm_atom_t *a = pddlFmNewEmptyAtom(goalAtom.args.size());
             int pred = goalAtom.predicate;
@@ -2674,6 +2692,8 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
 
         DEBUG(capsule.printVariables());
 
+
+		cout << "TOTAL VARIABLES " << " " << setw(8) << capsule.number_of_variables << endl;
         int totalClauses = 0;
         for (auto [k,v] : clauseCounter){
             cout << setw(30) << setfill('-') << k << " " << setw(8) << v << endl;
