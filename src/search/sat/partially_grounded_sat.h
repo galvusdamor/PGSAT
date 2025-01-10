@@ -29,6 +29,7 @@ class PartiallyGroundedSAT : public BaseSATEncoding{
 private:
     bool binary_encoding;
     bool no_fam_groups;
+    bool no_goal_pruning;
 
 	// information for binary encoding
 	int number_of_bits_for_objects;
@@ -69,7 +70,7 @@ private:
 	std::map<std::string,double> timings;
     std::clock_t _start;
 public:
-    PartiallyGroundedSAT(const Task& task, bool _binary_encoding, bool _no_fam_groups);
+    PartiallyGroundedSAT(const Task& task, bool _binary_encoding, bool _no_fam_groups, bool _no_goal_pruning);
 	utils::ExitCode solve(const Task& task, int limit, bool optimal, bool incremental);
 };
 
