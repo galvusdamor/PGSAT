@@ -291,8 +291,8 @@ int PartiallyGroundedSAT::get_different_var(void* solver, sat_capsule & capsule,
 }
 
 
-PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task, bool _binary_encoding, bool _no_fam_groups) :
-    BaseSATEncoding(task), binary_encoding(_binary_encoding), no_fam_groups(_no_fam_groups){
+PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task, bool _binary_encoding, bool _no_fam_groups, bool _no_goal_pruning) :
+    BaseSATEncoding(task), binary_encoding(_binary_encoding), no_fam_groups(_no_fam_groups), no_goal_pruning(_no_goal_pruning){
     _start=clock();
     
     cout << "Entering PG SAT" << endl;
@@ -410,15 +410,6 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task, bool _binary_encod
         }
     }
 	);
-
-    
-
-    // for (size_t goal = 0; goal < task.goal.goal.size(); goal++){
-	// 		const AtomicGoal & goalAtom = task.goal.goal[goal];
-    // }
-    
-
-
 
 
     pddl->init = pddlFmToAnd(pddlFmNewEmptyAnd());
@@ -781,31 +772,33 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task, bool _binary_encod
     }
 
     map<int, vector<vector<int>>> specialGoals;
-    for(size_t g = 0 ; g < task.goal.goal.size() ; g++){
-        if( predicatesInPreconditions.find(task.goal.goal[g].predicate) == predicatesInPreconditions.end() ){
-            vector<int> convertedArgs;
-            for(size_t obj = 0 ; obj < task.goal.goal[g].args.size() ; obj++){
-                convertedArgs.push_back(pwlObjToSATObject[task.goal.goal[g].args[obj]]);
+    if(!no_goal_pruning){
+        for(size_t g = 0 ; g < task.goal.goal.size() ; g++){
+            if( predicatesInPreconditions.find(task.goal.goal[g].predicate) == predicatesInPreconditions.end() ){
+                vector<int> convertedArgs;
+                for(size_t obj = 0 ; obj < task.goal.goal[g].args.size() ; obj++){
+                    convertedArgs.push_back(pwlObjToSATObject[task.goal.goal[g].args[obj]]);
+                }
+                specialGoals[task.goal.goal[g].predicate].push_back(convertedArgs);
             }
-            specialGoals[task.goal.goal[g].predicate].push_back(convertedArgs);
         }
-    }
 
-    DEBUG(
-        cout << "Special Goals : \n";
-        if(specialGoals.empty()) cout << "No special goals\n";
-        for (auto const& [key, val] : specialGoals){
-            cout << "Predicate : "<< key << endl;
-            for(size_t grounding = 0 ; grounding < specialGoals[key].size() ; grounding++){
-                cout << "\tArguments :";
-                for(size_t arg = 0 ; arg < specialGoals[key][grounding].size() ; arg++){
-                    cout << " " << specialGoals[key][grounding][arg];
+        DEBUG(
+            cout << "Special Goals : \n";
+            if(specialGoals.empty()) cout << "No special goals\n";
+            for (auto const& [key, val] : specialGoals){
+                cout << "Predicate : "<< key << endl;
+                for(size_t grounding = 0 ; grounding < specialGoals[key].size() ; grounding++){
+                    cout << "\tArguments :";
+                    for(size_t arg = 0 ; arg < specialGoals[key][grounding].size() ; arg++){
+                        cout << " " << specialGoals[key][grounding][arg];
+                    }
+                    cout << endl;
                 }
                 cout << endl;
             }
-            cout << endl;
-        }
-    );
+        );
+    }
 
     set<int> coveredPredicates;
     map<int, vector<int>> predicatesToFAM;
