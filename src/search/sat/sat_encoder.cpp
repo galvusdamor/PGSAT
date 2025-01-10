@@ -378,3 +378,123 @@ void atLeastOne(void* solver, sat_capsule & capsule, std::vector<int> & is){
 	number_of_clauses++;
 }
 
+
+void bitNumberAssert(void* solver, const std::vector<int> & bits, int value){
+	for (int bit = bits.size() - 1; bit >= 0; bit--){
+		if (((1 << bit) & value) == 0){
+			ipasir_add(solver, -bits[bit]);
+			ipasir_add(solver,0);
+			number_of_clauses++;
+		} else {
+			ipasir_add(solver,  bits[bit]);
+			ipasir_add(solver,0);
+			number_of_clauses++;
+		}
+	}
+
+}
+
+std::vector<int> bitNumberExtract(const std::vector<int> & bits, int value){
+	std::vector<int> ret;
+	for (int bit = bits.size() - 1; bit >= 0; bit--){
+		if (((1 << bit) & value) == 0){
+			ret.push_back(-bits[bit]);
+		} else {
+			ret.push_back( bits[bit]);
+		}
+	}
+	return ret;
+}
+
+
+void bitNumberIsAtMost(void* solver, const std::vector<int> & bits, int value){
+	std::vector<int> prefix;
+	for (int bit = bits.size() - 1; bit >= 0; bit--){
+		// if bit in value is 0 and the prefix so far is identical, then the bit in bits must also be zero
+		if (((1 << bit) & value) == 0){
+			for (int b : prefix) ipasir_add(solver, -b);
+			ipasir_add(solver, -bits[bit]);
+			ipasir_add(solver,0);
+			number_of_clauses++;
+
+
+			// add this bit to the prefix
+			prefix.push_back(-bits[bit]);
+		} else {
+			// if bit in value is 1 any value in bits will be at most value
+			// add this bit to the prefix
+			prefix.push_back( bits[bit]);
+		}
+	}
+}
+
+
+void bitNumberIsAtLeast(void* solver, const std::vector<int> & bits, int value){
+	std::vector<int> prefix;
+	for (int bit = bits.size() - 1; bit >= 0; bit--){
+		std::cout << "Bit " << bit << std::endl;
+		// if bit in value is 1 and the prefix so far is identical, then the bit in bits must also be one
+		if (((1 << bit) & value) == 1){
+			for (int b : prefix) ipasir_add(solver, -b);
+			ipasir_add(solver, bits[bit]);
+			ipasir_add(solver,0);
+			number_of_clauses++;
+
+
+			// add this bit to the prefix
+			prefix.push_back( bits[bit]);
+		} else {
+			// if bit in value is 0 any value in bits well be at least that one
+			// add this bit to the prefix
+			prefix.push_back(-bits[bit]);
+		}
+	}
+
+}
+
+void bitNumberIsAtMostIf(void* solver, const std::vector<int> & bits, int value, int ifVar){
+	std::vector<int> prefix;
+	for (int bit = bits.size() - 1; bit >= 0; bit--){
+		// if bit in value is 0 and the prefix so far is identical, then the bit in bits must also be zero
+		if (((1 << bit) & value) == 0){
+			ipasir_add(solver, -ifVar);
+			for (int b : prefix) ipasir_add(solver, -b);
+			ipasir_add(solver, -bits[bit]);
+			ipasir_add(solver,0);
+			number_of_clauses++;
+
+
+			// add this bit to the prefix
+			prefix.push_back(-bits[bit]);
+		} else {
+			// if bit in value is 1 any value in bits will be at most value
+			// add this bit to the prefix
+			prefix.push_back( bits[bit]);
+		}
+	}
+}
+
+
+void bitNumberIsAtLeastIf(void* solver, const std::vector<int> & bits, int value, int ifVar){
+	std::vector<int> prefix;
+	for (int bit = bits.size() - 1; bit >= 0; bit--){
+		// if bit in value is 1 and the prefix so far is identical, then the bit in bits must also be one
+		if (((1 << bit) & value) == 1){
+			ipasir_add(solver, -ifVar);
+			for (int b : prefix) ipasir_add(solver, -b);
+			ipasir_add(solver, bits[bit]);
+			ipasir_add(solver,0);
+			number_of_clauses++;
+
+
+			// add this bit to the prefix
+			prefix.push_back( bits[bit]);
+		} else {
+			// if bit in value is 0 any value in bits well be at least that one
+			// add this bit to the prefix
+			prefix.push_back(-bits[bit]);
+		}
+	}
+
+}
+

@@ -30,6 +30,11 @@ private:
     bool binary_encoding;
     bool no_fam_groups;
 
+	// information for binary encoding
+	int number_of_bits_for_objects;
+
+
+
     std::vector<std::pair<int, std::vector<int>>> all_facts;
     std::map<std::pair<int, std::vector<int>>,int> all_facts_index;
     
@@ -49,6 +54,7 @@ private:
 	std::vector<int> generateFactVars(sat_capsule & capsule, int timestep, std::vector<std::string>);
     std::map<int, std::map<std::vector<int>, std::vector<std::vector<int>>>> generateFAMVars(void* solver, sat_capsule & capsule, int timestep);
     
+	const std::vector<int> get_binary_paramter_var(void* solver, sat_capsule & capsule, int time_action, int action_argument_position, const std::vector<std::map<int,int>> & parameterVars);
     int get_equals_var(void* solver, sat_capsule & capsule, int time_action, int time_state, int action_argument_position,\
         int FAM_group, int param_id, std::vector<int> free_variable_grounding, int counted_var,
         const std::vector<int> & counted_var_objects, int counted_var_type, const std::vector<std::map<int,int>> & parameterVars);

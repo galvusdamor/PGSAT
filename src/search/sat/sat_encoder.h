@@ -79,4 +79,13 @@ void notAll(void* solver, std::set<int> i);
 void notAll(void* solver, std::vector<int> i);
 
 
+void bitNumberAssert(void* solver, const std::vector<int> & bits, int value);
+void bitNumberIsAtMost(void* solver, const std::vector<int> & bits, int value);
+void bitNumberIsAtLeast(void* solver, const std::vector<int> & bits, int value);
+
+void bitNumberIsAtMostIf(void* solver, const std::vector<int> & bits, int value, int ifVar);
+void bitNumberIsAtLeastIf(void* solver, const std::vector<int> & bits, int value, int ifVar);
+
+std::vector<int> bitNumberExtract(const std::vector<int> & bits, int value);
+
 #endif

@@ -204,6 +204,34 @@ bool is_mutex_group_contained_in(pddl_lifted_mgroup_t * m1, pddl_lifted_mgroup_t
 map<int,map<int,map<int,map<int,map<int, map<int, map<vector<int>,int>>>>>>> equals_var_map;
 map<int,map<pair<int, int>, int>> countedOfType;
 
+
+map<int,map<int,vector<int>>> generatedBinaryParameterVars;
+
+const vector<int> PartiallyGroundedSAT::get_binary_paramter_var(void* solver, sat_capsule & capsule, int time_action, int action_argument_position, const vector<map<int,int>> & parameterVars){
+	if (generatedBinaryParameterVars[time_action].count(action_argument_position))
+		return generatedBinaryParameterVars[time_action][action_argument_position];
+
+	// we need to generate them
+	vector<int> bits;
+	for (size_t bit = 0; bit < number_of_bits_for_objects; bit++){
+	    int bitvar = capsule.new_variable();
+	    bits.push_back(bitvar);
+		DEBUG(capsule.registerVariable(bitvar,"parameterbit@" + to_string(time_action)+ " " + to_string(action_argument_position) + " bit " + to_string(bit)));
+	}
+
+	// assert the possible values
+	for(int object = lowerTypeindex[typeOfArgument[action_argument_position]] ; object <= upperTypeindex[typeOfArgument[action_argument_position]] ; object++){
+		const vector<int> thisBits = bitNumberExtract(bits,object);
+		int objectVar =  parameterVars[action_argument_position].at(object);
+		for (const int b : thisBits)
+			implies(solver, objectVar, b);
+	}
+
+	generatedBinaryParameterVars[time_action][action_argument_position] = bits;
+	return bits;
+}
+
+
 int PartiallyGroundedSAT::get_equals_var(void* solver, sat_capsule & capsule, int time_action, int time_state, int action_argument_position,
                     int FAM_group, int param_id, vector<int> free_variable_grounding, int counted_var,
                     const vector<int> & counted_var_objects, int counted_var_type, const vector<map<int,int>> & parameterVars){
@@ -214,14 +242,27 @@ int PartiallyGroundedSAT::get_equals_var(void* solver, sat_capsule & capsule, in
     // registering
     equals_var_map[time_action][time_state][action_argument_position][FAM_group][param_id][counted_var][free_variable_grounding] = newVar;
 
-    for(int object = lowerTypeindex[typeOfArgument[action_argument_position]] ; object <= upperTypeindex[typeOfArgument[action_argument_position]] ; object++){
-        if (object < lowerTypeindex[counted_var_type]) continue;
-        if (object > upperTypeindex[counted_var_type]) continue;
-        int parameterObject =  parameterVars[action_argument_position].at(object);
-        andImplies(solver, newVar, parameterObject, counted_var_objects[object - lowerTypeindex[counted_var_type]]);
-        andImplies(solver, newVar, counted_var_objects[object - lowerTypeindex[counted_var_type]], parameterObject);
-        andImplies(solver, counted_var_objects[object - lowerTypeindex[counted_var_type]], parameterObject, newVar);
-    }
+	if (!binary_encoding){
+    	for(int object = lowerTypeindex[typeOfArgument[action_argument_position]] ; object <= upperTypeindex[typeOfArgument[action_argument_position]] ; object++){
+    	    if (object < lowerTypeindex[counted_var_type]) continue;
+    	    if (object > upperTypeindex[counted_var_type]) continue;
+    	    int parameterObject =  parameterVars[action_argument_position].at(object);
+    	    andImplies(solver, newVar, parameterObject, counted_var_objects[object - lowerTypeindex[counted_var_type]]);
+    	    andImplies(solver, newVar, counted_var_objects[object - lowerTypeindex[counted_var_type]], parameterObject);
+    	    andImplies(solver, counted_var_objects[object - lowerTypeindex[counted_var_type]], parameterObject, newVar);
+    	}
+	} else {
+		const vector<int> parameterBinaryVars = get_binary_paramter_var(solver, capsule, time_action, action_argument_position, parameterVars);
+		assert(parameterBinaryVars.size() == counted_var_objects.size());
+		for (size_t bit = 0; bit < counted_var_objects.size(); bit++){
+			int paramBit = parameterBinaryVars[bit];
+			int countedBit = counted_var_objects[bit];
+			// newVar captures equality between the bits
+			andImplies(solver,newVar,paramBit,countedBit);
+			andImplies(solver,newVar,countedBit,paramBit);
+			andImplies(solver,countedBit,paramBit,newVar);
+		}
+	}
 
     return newVar;
 }
@@ -230,13 +271,17 @@ vector<int> PartiallyGroundedSAT::get_counted_vars_for_const(int object,
                     const vector<int> & counted_var_objects, int counted_var_type){
 	vector<int> variablesForThisObject;
 
-	assert(counted_var_type < task.type_names.size());
-	assert(object >= lowerTypeindex[counted_var_type]);
-	assert(object <= upperTypeindex[counted_var_type]);
-	int objectIndex = object - lowerTypeindex[counted_var_type];
-	assert(objectIndex >= 0);
-	assert(objectIndex < counted_var_objects.size());
-	variablesForThisObject.push_back(counted_var_objects[objectIndex]);
+	if (!binary_encoding){
+		assert(counted_var_type < task.type_names.size());
+		assert(object >= lowerTypeindex[counted_var_type]);
+		assert(object <= upperTypeindex[counted_var_type]);
+		int objectIndex = object - lowerTypeindex[counted_var_type];
+		assert(objectIndex >= 0);
+		assert(objectIndex < counted_var_objects.size());
+		variablesForThisObject.push_back(counted_var_objects[objectIndex]);
+	} else {
+		variablesForThisObject = bitNumberExtract(counted_var_objects,object);
+	}
 	return variablesForThisObject;
 }
 
@@ -284,7 +329,7 @@ int PartiallyGroundedSAT::get_different_var(void* solver, sat_capsule & capsule,
 		impliesPosAndNegImpliesOr(solver, previous[i], next[i], _newVar);
 		impliesPosAndNegImpliesOr(solver, next[i], previous[i], _newVar);
 		// if both are true, then not changed, Note: this is not correct for binary representation
-		andImpliesNot(solver, previous[i], next[i], newVar);
+		if (!binary_encoding) andImpliesNot(solver, previous[i], next[i], newVar);
 	}
 
 	return newVar;
@@ -1120,6 +1165,18 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task, bool _binary_encod
 
     //std::map<int,std::map<std::vector<int>, std::vector<std::vector<int>>>> mutexFDRVars; {FAM -> {[freeGroundings] : [countedVarID][countedVar]}}
 
+
+
+
+
+	if (binary_encoding){
+		number_of_bits_for_objects = 0;
+		while ((1 << number_of_bits_for_objects) < task.objects.size())
+			number_of_bits_for_objects++;
+		cout << "Binary representation uses " << number_of_bits_for_objects << " for " << task.objects.size() << " many objects." << endl; 
+	}
+
+
     for(size_t selected_mutex = 0 ; selected_mutex < selected_mutexes.size() ; selected_mutex++){
         pair<int, vector<int>> mutex = fam_based_mutexes[selected_mutexes[selected_mutex]];
         mutexFDRVars[mutex.first][mutex.second].size();
@@ -1498,31 +1555,43 @@ map<int, map<vector<int>, vector<vector<int>>>> PartiallyGroundedSAT::generateFA
             mutexFDRSATVarsTime[FAM][key].size();
             for(size_t num_vec = 0 ; num_vec < mutexFDRVars[FAM][key].size() ; num_vec++){
                 mutexFDRSATVarsTime[FAM][key].push_back(vector<int>());
+				if (mutexFDRVars[FAM][key][num_vec].size() == 0) continue; // edge case; for free vars
+																		   
+                if (binary_encoding && num_vec + 1 < mutexFDRVars[FAM][key].size()){
+					// design choice: we always use the sat indexation of objects for the binary encoding.
+					// That is the values always range from 0 to max number of objects - even if this var has only few (e.g. 1 or 2) values.
+					// This is to make it easier to check equality of variables of different type
+					
+					for (size_t bit = 0; bit < number_of_bits_for_objects; bit++){
+                	    int bitvar = capsule.new_variable();
+                	    mutexFDRSATVarsTime[FAM][key][num_vec].push_back(bitvar);
+						DEBUG(
+							capsule.registerVariable(bitvar,"fam@" + to_string(timestep)+ " " + to_string(FAM) + " var " + to_string(num_vec) + " bit " + to_string(bit)));
+					}
 
-                if (binary_encoding){
-
-
+					// assert the min and max constraints
+					bitNumberIsAtLeast(solver,mutexFDRSATVarsTime[FAM][key][num_vec], mutexFDRVars[FAM][key][num_vec][0]);
+					bitNumberIsAtMost(solver,mutexFDRSATVarsTime[FAM][key][num_vec], mutexFDRVars[FAM][key][num_vec].back());
                 } else {
-
-                for(size_t objs = 0 ; objs < mutexFDRVars[FAM][key][num_vec].size() ; objs++){
-                    int groundedCountedObjectVar = capsule.new_variable();
-                    mutexFDRSATVarsTime[FAM][key][num_vec].push_back(groundedCountedObjectVar);
-	    			DEBUG(
-						string name = "";
-						for (int x : key) name += " " + task.objects[satObjectToPWLObject[x]].getName();
+                	for(size_t objs = 0 ; objs < mutexFDRVars[FAM][key][num_vec].size() ; objs++){
+                	    int groundedCountedObjectVar = capsule.new_variable();
+                	    mutexFDRSATVarsTime[FAM][key][num_vec].push_back(groundedCountedObjectVar);
+	    				DEBUG(
+							string name = "";
+							for (int x : key) name += " " + task.objects[satObjectToPWLObject[x]].getName();
 	
-						string value = "";
-						int int_obj = mutexFDRVars[FAM][key][num_vec][objs];
-						if (num_vec + 1 == mutexFDRVars[FAM][key].size()){
-							if (int_obj == -1) value = "-1";
-							else value = task.predicates[int_obj].getName();
-						} else {
-							value = task.objects[satObjectToPWLObject[int_obj]].getName();
-						}
-						capsule.registerVariable(groundedCountedObjectVar,"fam@" + to_string(timestep)+ " " + to_string(FAM) + " - " + name + " var " + to_string(num_vec) + " = " + value);
-					);
-                }
-                atMostOne(solver, capsule, mutexFDRSATVarsTime[FAM][key][num_vec]);
+							string value = "";
+							int int_obj = mutexFDRVars[FAM][key][num_vec][objs];
+							if (num_vec + 1 == mutexFDRVars[FAM][key].size()){
+								if (int_obj == -1) value = "-1";
+								else value = task.predicates[int_obj].getName();
+							} else {
+								value = task.objects[satObjectToPWLObject[int_obj]].getName();
+							}
+							capsule.registerVariable(groundedCountedObjectVar,"fam@" + to_string(timestep)+ " " + to_string(FAM) + " - " + name + " var " + to_string(num_vec) + " = " + value);
+						);
+                	}
+                	atMostOne(solver, capsule, mutexFDRSATVarsTime[FAM][key][num_vec]);
                 }
             }
         }
@@ -1532,11 +1601,15 @@ map<int, map<vector<int>, vector<vector<int>>>> PartiallyGroundedSAT::generateFA
         int fam = fam_based_mutexes[inactiveMutexes[im]].first;
         vector<int> fg = fam_based_mutexes[inactiveMutexes[im]].second;
         vector<vector<int>> cv = mutexFDRSATVarsTime[fam][fg];
-        for(size_t param_id = 0 ; param_id < cv.size()-1 ; param_id++){
-            for(size_t v = 0 ; v < cv[param_id].size() ; v++){
-                assertNot(solver, cv[param_id][v]);
-            }
-        }
+		if (!binary_encoding){
+			// in the binary encoding, we cannot enforce this as 0 is an actual object.
+			// Instead, we rely on the fact that the predicate is set to "none-of-those" (back.back below).
+        	for(size_t param_id = 0 ; param_id < cv.size()-1 ; param_id++){
+        	    for(size_t v = 0 ; v < cv[param_id].size() ; v++){
+        	        assertNot(solver, cv[param_id][v]);
+        	    }
+        	}
+		}
         assertYes(solver, cv.back().back());
     }
     return mutexFDRSATVarsTime;
@@ -1631,12 +1704,16 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
 						for (size_t var = 0; var < counted_variables_values.size(); var++){
 							if (counted_variables_values[var] == -1) continue; // no restriction on this value
 
-							int base_object = mutexFDRVars[fam][free_grounding][var][0];
-							int object_offset = counted_variables_values[var] - base_object;
+							if (binary_encoding){
+								bitNumberAssert(solver,counted_sat_variables[var], counted_variables_values[var]);
+							} else {
+								int base_object = mutexFDRVars[fam][free_grounding][var][0];
+								int object_offset = counted_variables_values[var] - base_object;
 
-							int myObjectVariable = counted_sat_variables[var][object_offset];
+								int myObjectVariable = counted_sat_variables[var][object_offset];
 
-							assertYes(solver,myObjectVariable);
+								assertYes(solver,myObjectVariable);
+							}
 						}
 
 						for(size_t p = 0 ; p < mutexFDRVars[fam][free_grounding].back().size() ; p++){
@@ -2028,7 +2105,7 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
 							   		//for (int x : val[grounding]) cout << " " << x;
 									//cout << " -> " << " " << countedVariableType << " "  << mutexFDRSATVarsTime[key][val[grounding]].size() << " " << counted_var_info[1] << endl;
 									assert(trltToGlobalIndex != -1);
-									assert(counted_var_objects.size() == upperTypeindex[countedVariableType] - lowerTypeindex[countedVariableType] + 1);
+									if (!binary_encoding) assert(counted_var_objects.size() == upperTypeindex[countedVariableType] - lowerTypeindex[countedVariableType] + 1);
                                 	int cntOfType = get_counted_of_type_var(solver, capsule, timestep, trltToGlobalIndex, countedVariableType, parameterVarsTime);
                                 	int equals_var = get_equals_var(solver, capsule, timestep, timestep, trltToGlobalIndex, key, counted_var_info[1], val[grounding], countedVars,
                                 	    counted_var_objects, countedVariableType, parameterVarsTime);
@@ -2568,13 +2645,17 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
 
 					for (size_t var = 0; var < counted_variables_values.size(); var++){
 						if (counted_variables_values[var] == -1) continue; // no restriction on this value
+					
+						if (binary_encoding){
+							bitNumberAssert(solver,counted_sat_variables[var], counted_variables_values[var]);
+						} else {
+							int base_object = mutexFDRVars[fam][free_grounding][var][0];
+							int object_offset = counted_variables_values[var] - base_object;
 
-						int base_object = mutexFDRVars[fam][free_grounding][var][0];
-						int object_offset = counted_variables_values[var] - base_object;
+							int myObjectVariable = counted_sat_variables[var][object_offset];
 
-						int myObjectVariable = counted_sat_variables[var][object_offset];
-
-						assertYes(solver,myObjectVariable);
+							assertYes(solver,myObjectVariable);
+						}
 					}
 
 					for(size_t p = 0 ; p < mutexFDRVars[fam][free_grounding].back().size() ; p++){
