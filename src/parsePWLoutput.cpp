@@ -335,6 +335,8 @@ int main(int argc, char** argv) {
         }else if( arguments > 0){
             getline(PWLoutput, line);
             typed_output << line << endl;
+        }else if( arguments == 0){
+            typed_output << endl;
         }
     }
 
@@ -376,6 +378,9 @@ int main(int argc, char** argv) {
             PWLoutput >> object;
             typed_output << " " << object;
         }
+        /* if(arguments == 0){
+                typed_output << " ";
+        } */
         typed_output << endl;
     }
 
@@ -411,6 +416,9 @@ int main(int argc, char** argv) {
                 PWLoutput >> par_const >> index_in_action;
                 typed_output << " " << par_const << " " << index_in_action;
             }
+            /* if(num_args == 0){
+                typed_output << ' ';
+            } */
             typed_output << endl;
         }
         for(int j = 0 ; j < effects ; j++){

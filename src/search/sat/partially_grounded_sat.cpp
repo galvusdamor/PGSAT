@@ -654,9 +654,9 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task, bool _binary_encod
         for (int j = 0; j < (lifted_mgroups.mgroup + i)->cond.size; j++){
             const pddl_fm_atom_t *atom = pddlFmToAtomConst((lifted_mgroups.mgroup + i)->cond.fm[j]);
             map<LFG_VAR_TYPES, vector<vector<int>>> aux;
-            aux[LFG_COUNTED].clear();
-            aux[LFG_FREE].clear();
-            aux[LFG_CONST].clear();
+            //aux[LFG_COUNTED].clear();
+            //aux[LFG_FREE].clear();
+            //aux[LFG_CONST].clear();
             for (int k = 0; k < atom->arg_size; k++){
                 if (atom->arg[k].param >= 0){
                     int param_id = atom->arg[k].param;
@@ -873,18 +873,22 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task, bool _binary_encod
             for (auto const& [pred, mapOfVars] : mapOfPredicates){
                 if (pred != predicates || mapOfVars.count(LFG_CONST)){ /* skipping = true; */ continue;}
                 skipping = false;
-                for(size_t args = 0 ; args < mapOfVars.at(LFG_FREE).size() ; args++){
-                    if(mapOfVars.at(LFG_FREE)[args][2] != argTypes[mapOfVars.at(LFG_FREE)[args][0]]){
-                        cout << FAM << " : " << pred <<  " : AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA!!!!!!!!!!!!!!\n";
-                        matching = false;
-                        break;
+                if(mapOfVars.count(LFG_FREE)){
+                    for(size_t args = 0 ; args < mapOfVars.at(LFG_FREE).size() ; args++){
+                        if(mapOfVars.at(LFG_FREE)[args][2] != argTypes[mapOfVars.at(LFG_FREE)[args][0]]){
+                            cout << FAM << " : " << pred <<  " : AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA!!!!!!!!!!!!!!\n";
+                            matching = false;
+                            break;
+                        }
                     }
                 }
-                for(size_t args = 0 ; args < mapOfVars.at(LFG_COUNTED).size() ; args++){
-                    if(mapOfVars.at(LFG_COUNTED)[args][2] != argTypes[mapOfVars.at(LFG_COUNTED)[args][0]] || !matching){
-                        cout << FAM << " : " << pred << " : AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA2!!!!!!!!!!!!!!\n";
-                        matching = false;
-                        break;
+                if(mapOfVars.count(LFG_COUNTED)){
+                    for(size_t args = 0 ; args < mapOfVars.at(LFG_COUNTED).size() ; args++){
+                        if(mapOfVars.at(LFG_COUNTED)[args][2] != argTypes[mapOfVars.at(LFG_COUNTED)[args][0]] || !matching){
+                            cout << FAM << " : " << pred << " : AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA2!!!!!!!!!!!!!!\n";
+                            matching = false;
+                            break;
+                        }
                     }
                 }
             }
@@ -956,13 +960,13 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task, bool _binary_encod
         all_facts_index[all_facts[i]] = i;
     }
 
-    /* DEBUG(for(size_t i = 0 ; i < all_facts.size() ; i++){
+    DEBUG(for(size_t i = 0 ; i < all_facts.size() ; i++){
         cout << "Predicate : " << all_facts[i].first << "; Objects :";
         for(size_t j = 0 ; j < all_facts[i].second.size() ; j++){
             cout << " " << all_facts[i].second[j];
         }
         cout << endl;
-    }); */
+    });
 
 
     map<int, vector<int>> fact_to_mutexes;
@@ -1694,6 +1698,7 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
                     satTuple.push_back(pwlObjToSATObject[x]);
                 }
                 int factIndex;
+                //cout << "satTuple.size() : " << satTuple.size() << endl;
                 if ( all_facts_index.find({pred, satTuple}) !=  all_facts_index.end() )
 				    factIndex = all_facts_index[{pred, satTuple}];
                 else
@@ -1739,6 +1744,7 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
                 //cout << fact << " " << previousTimeMutexPredicateVars[fact] << endl;
                 assertYes(solver,previousTimeMutexPredicateVars[fact_index_to_uncovered[fact]]);
             }else{
+                //cout << "ENTREI ASSERT NOT\n";
                 assertNot(solver,previousTimeMutexPredicateVars[fact_index_to_uncovered[fact]]);
             }
         }
