@@ -800,8 +800,8 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task, bool _binary_encod
         }else if(mutex_fixed_variable[fam].size() == 0){
             fam_based_mutexes.push_back({fam, {}});
         }
-        int upperRange = fam_based_mutexes.size();
-        FAMRange[fam] = {lowerRange, upperRange-1};
+        int upperRange = fam_based_mutexes.size()-1;
+        FAMRange[fam] = {lowerRange, upperRange};
     }
 
     DEBUG(
@@ -915,6 +915,7 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task, bool _binary_encod
         if (task.predicates[predicates].getName().rfind("type@", 0) == 0) continue;
 		if (task.predicates[predicates].getName().rfind("=", 0) == 0) continue;
         if (task.predicates[predicates].isStaticPredicate()) continue;
+        if (task.predicates[predicates].getArity() == 0) continue;
         if (coveredPredicates.find(predicates) != coveredPredicates.end()) continue;
         if( specialGoals.find(predicates) != specialGoals.end() ){
             for(size_t grounding = 0 ; grounding < specialGoals[predicates].size() ; grounding++){
@@ -958,6 +959,44 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task, bool _binary_encod
 
     for (size_t i =0 ; i < all_facts.size(); i++){
         all_facts_index[all_facts[i]] = i;
+    }
+
+    int startPointToDecrease = all_facts.size();
+    set<int> forceGeneratedFacts;
+
+    for (size_t i = 0; i < task.initial_state.get_relations().size(); i++) {
+        //if (debug_no_init) continue;
+        auto rel = task.initial_state.get_relations()[i];
+        auto tuple = task.initial_state.get_tuples_of_relation(i);
+        for (vector<int> groundA: tuple) {
+            int pred = rel.predicate_symbol;
+            vector<int> satTuple;
+            for(int x : groundA){
+                satTuple.push_back(pwlObjToSATObject[x]);
+            }
+            if ( all_facts_index.find({pred, satTuple}) ==  all_facts_index.end() ){
+                all_facts.push_back({pred, satTuple});
+                all_facts_index[{pred, satTuple}] = all_facts.size()-1;
+                forceGeneratedFacts.insert(all_facts.size()-1);
+            }
+        }
+    }
+
+    for (size_t goal = 0; goal < task.goal.goal.size(); goal++){
+        //if (debug_no_goal) continue;
+        const AtomicGoal & goalAtom = task.goal.goal[goal];
+        //pddl_fm_atom_t *a = pddlFmNewEmptyAtom(goalAtom.args.size());
+        int pred = goalAtom.predicate;
+        int goalStateFact;
+        vector<int> translatedArgs;
+        for(size_t arg = 0; arg < goalAtom.args.size() ; arg++){
+            translatedArgs.push_back(pwlObjToSATObject[goalAtom.args[arg]]);
+        }
+        if ( all_facts_index.find({pred, translatedArgs}) ==  all_facts_index.end() ){
+            all_facts.push_back({pred, translatedArgs});
+            all_facts_index[{pred, translatedArgs}] = all_facts.size()-1;
+            forceGeneratedFacts.insert(all_facts.size()-1);
+        }
     }
 
     DEBUG(for(size_t i = 0 ; i < all_facts.size() ; i++){
@@ -1039,22 +1078,37 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task, bool _binary_encod
     }
 
     cout << "mutex_to_facts.size() : " << mutex_to_facts.size() << endl;
-
+    cout << "total groups = " << total_groups << endl;
     for(size_t i = 0 ;  i < total_groups ; i++){
         if(!mutex_to_facts.count(i)){
             cout << "FAM based mutex number : " << FAM_group_indexes[fam_based_mutexes[i].first] << " ; " << i << endl;
         }  
     }
-    
+    cout << "total groups = " << total_groups << endl;
     vector<bool> decreased_fact(fact_to_mutexes.size(), false);
+    if(startPointToDecrease != all_facts.size()){
+        for(size_t start = startPointToDecrease ; start < all_facts.size() ; start++){
+            decreased_fact[start] = true;
+        }
+    }
+    cout << "total groups = " << total_groups << endl;
     vector<int> num_facts_in_mutex(total_groups, 0);
     map<int,set<int>> sizeToMutexes;
     vector<int> selected_mutexes;
     for(size_t i = 0 ; i < total_groups ; i++){
-        num_facts_in_mutex[i] = mutex_to_facts[i].size();
-        sizeToMutexes[mutex_to_facts[i].size()].insert(i);
+        for(int fact : mutex_to_facts[i]){
+            if(forceGeneratedFacts.find(fact) == forceGeneratedFacts.end()){
+                num_facts_in_mutex[i]++;
+            }
+        }
+        //num_facts_in_mutex[i] = mutex_to_facts[i].size();
+        //sizeToMutexes[mutex_to_facts[i].size()].insert(i);
     }
-    
+    for(size_t i = 0 ; i < total_groups ; i++){
+        sizeToMutexes[num_facts_in_mutex[i]].insert(i);
+    }
+
+    cout << "total groups = " << total_groups << endl;
     if(sizeToMutexes.size() > 0){
         while( sizeToMutexes.rbegin()->first /*!= 0*/){
             if (sizeToMutexes.rbegin()->second.size() == 0){
@@ -1093,6 +1147,7 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task, bool _binary_encod
 
         }
     }
+    cout << "OLA\n";
 
     //map<int, vector<int>> predicatesToFAM;
     //map<int, vector<int>> FAMToPredicates;
@@ -1697,16 +1752,44 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
                 for(int x : groundA){
                     satTuple.push_back(pwlObjToSATObject[x]);
                 }
-                int factIndex;
-                //cout << "satTuple.size() : " << satTuple.size() << endl;
-                if ( all_facts_index.find({pred, satTuple}) !=  all_facts_index.end() )
-				    factIndex = all_facts_index[{pred, satTuple}];
-                else
-                    continue;
+                int factIndex = all_facts_index[{pred, satTuple}];
                 if(uncovered_facts_set.count(factIndex)){
                     factsInInitialState.insert(factIndex);
                 }else{
-					for (const auto & [grounded_fam_index, counted_variables_values] : fact_to_mutexes_with_counted_info[factIndex]){
+                    /* vector<pair<int,vector<int>>> mutexes_with_counted_info;
+                    for(const auto & [types_of_arguments, FAM_map] : idek[pred]){
+                        bool cont = false;
+                        for(size_t z = 0 ; z < types_of_arguments.size() ; z++){
+                            if(types[types_of_arguments[z]].find(satTuple[z]) == types[types_of_arguments[z]].end()){
+                                cont = true;
+                                break;
+                            }
+                        }
+                        if(cont) continue;
+                        for(const auto & [FAM, free_groundings] : FAM_map){
+                            for(int lower = FAMRange[FAM].first ; lower <= FAMRange[FAM].second ; lower++){
+                                cont = false;
+                                if(clearer[FAM][pred].count(LFG_FREE)){
+                                    for(size_t fv = 0 ; fv < clearer[FAM][pred][LFG_FREE].size() ; fv++){
+                                        if( fam_based_mutexes[lower].second[clearer[FAM][pred][LFG_FREE][fv][1]] != satTuple[clearer[FAM][pred][LFG_FREE][fv][0]] ){
+                                            cont = true;
+                                            break;
+                                        }
+                                    }
+                                    if(cont) continue;
+                                    vector<int> counted_vars_info (highestCountedVars[FAM]+1, -1);
+                                    if(clearer[FAM][pred].count(LFG_COUNTED)){
+                                        for(size_t cv = 0 ; cv < clearer[FAM][pred][LFG_COUNTED].size() ; cv++){
+                                            counted_vars_info[clearer[FAM][pred][LFG_COUNTED][cv][1]] = satTuple[clearer[FAM][pred][LFG_COUNTED][cv][0]];
+                                        }
+                                        mutexes_with_counted_info.push_back({lower, counted_vars_info});
+                                    }
+                                }
+                            }
+                        }
+                    }
+					for (const auto & [grounded_fam_index, counted_variables_values] : mutexes_with_counted_info){ */
+                    for (const auto & [grounded_fam_index, counted_variables_values] : fact_to_mutexes_with_counted_info[factIndex]){
 						const auto & [fam, free_grounding] = fam_based_mutexes[grounded_fam_index];
 
 						if (mutexFDRSATVarsTime.count(fam) == 0) continue;
@@ -2652,7 +2735,46 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
             if(uncovered_facts_set.count(factIndex)){
                 factsInGoalState.push_back(factIndex);
             }else{
-				for (const auto & [grounded_fam_index, counted_variables_values] : fact_to_mutexes_with_counted_info[factIndex]){
+                /* vector<pair<int,vector<int>>> mutexes_with_counted_info;
+                for(const auto & [types_of_arguments, FAM_map] : idek[pred]){
+                    bool cont = false;
+                    for(size_t z = 0 ; z < types_of_arguments.size() ; z++){
+                        if(types[types_of_arguments[z]].find(translatedArgs[z]) == types[types_of_arguments[z]].end()){
+                            cont = true;
+                            break;
+                        }
+                    }
+                    if(cont) continue;
+                    for(const auto & [FAM, free_groundings] : FAM_map){
+                        for(int lower = FAMRange[FAM].first ; lower <= FAMRange[FAM].second ; lower++){
+                            cont = false;
+                            if(clearer[FAM][pred].count(LFG_FREE)){
+                                for(size_t fv = 0 ; fv < clearer[FAM][pred][LFG_FREE].size() ; fv++){
+                                    if( fam_based_mutexes[lower].second[clearer[FAM][pred][LFG_FREE][fv][1]] != translatedArgs[clearer[FAM][pred][LFG_FREE][fv][0]] ){
+                                        cont = true;
+                                        break;
+                                    }
+                                }
+                                if(cont) continue;
+                                vector<int> counted_vars_info (highestCountedVars[FAM]+1, -1);
+                                if(clearer[FAM][pred].count(LFG_COUNTED)){
+                                    for(size_t cv = 0 ; cv < clearer[FAM][pred][LFG_COUNTED].size() ; cv++){
+                                        counted_vars_info[clearer[FAM][pred][LFG_COUNTED][cv][1]] = translatedArgs[clearer[FAM][pred][LFG_COUNTED][cv][0]];
+                                    }
+                                    mutexes_with_counted_info.push_back({lower, counted_vars_info});
+                                }
+                            }
+                        }
+                    }
+                }
+				for (const auto & [grounded_fam_index, counted_variables_values] : mutexes_with_counted_info){ */
+                for (const auto & [grounded_fam_index, counted_variables_values] : fact_to_mutexes_with_counted_info[factIndex]){
+                    cout << "grounded_fam_index : " << grounded_fam_index << endl;
+                    cout << "counted_variables_values :"; 
+                    for(size_t z = 0 ; z < counted_variables_values.size() ; z++){
+                        cout << " " << counted_variables_values[z];
+                    }
+                    cout << endl;
 					const auto & [fam, free_grounding] = fam_based_mutexes[grounded_fam_index];
 
 					if (mutexFDRSATVarsTime.count(fam) == 0) continue;
@@ -2666,6 +2788,12 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
 						if (binary_encoding){
 							bitNumberAssert(solver,counted_sat_variables[var], counted_variables_values[var]);
 						} else {
+                            cout << "fam = " << fam << endl;
+                            cout << "free_grounding :"; 
+                            for(size_t z = 0 ; z < free_grounding.size() ; z++){
+                                cout << " " << free_grounding[z];
+                            }
+                            cout << endl;
 							int base_object = mutexFDRVars[fam][free_grounding][var][0];
 							int object_offset = counted_variables_values[var] - base_object;
 

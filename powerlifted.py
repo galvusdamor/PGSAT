@@ -168,7 +168,7 @@ def main():
                '--seed', str(options.seed)]
     else:
         # Invoke the C++ search component
-        cmd = [#'valgrind', 
+        cmd = [#'valgrind', "--exit-on-first-error=yes",
                os.path.join(build_dir, 'search', 'search'),
                '-f', options.translator_file + ".typed",
                '-s', options.search,
