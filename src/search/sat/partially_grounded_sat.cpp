@@ -1579,6 +1579,17 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task, bool _binary_encod
     }
     cout<< endl;
 
+    factToString.clear();
+    for (size_t predicate = 0; predicate < all_facts.size(); predicate++){
+        string groundedPredicate = task.predicates[all_facts[predicate].first].getName()+"("; 
+        for(size_t object = 0 ; object < all_facts[predicate].second.size() ; object++){
+            if (object) groundedPredicate += ", ";
+            groundedPredicate += task.objects[satObjectToPWLObject[all_facts[predicate].second[object]]].getName();
+        }
+        groundedPredicate += ")";
+        factToString.push_back(groundedPredicate);
+    }
+
 
 	cout << endl;
     //pddlPrintPDDLDomain(pddl,stdout);
@@ -1701,16 +1712,6 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
         reset_number_of_clauses();
         sat_capsule capsule;
         int beforeClause = get_number_of_clauses();
-
-         for (size_t predicate = 0; predicate < all_facts.size(); predicate++){
-            string groundedPredicate = task.predicates[all_facts[predicate].first].getName()+"("; 
-            for(size_t object = 0 ; object < all_facts[predicate].second.size() ; object++){
-                if (object) groundedPredicate += ", ";
-                groundedPredicate += task.objects[satObjectToPWLObject[all_facts[predicate].second[object]]].getName();
-            }
-            groundedPredicate += ")";
-            factToString.push_back(groundedPredicate);
-        }
 
         vector<int> previousTimeMutexPredicateVars = generateFactVars(capsule,0, factToString);
         map<int, map<vector<int>, vector<vector<int>>>> mutexFDRSATVarsTime = generateFAMVars(solver, capsule,0);
