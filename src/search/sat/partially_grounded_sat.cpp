@@ -620,8 +620,8 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task, bool _binary_encod
 	// Normalize pddl, i.e. remove stuff and so on
 	pddlNormalize(pddl, NULL);
 
-    pddlPrintPDDLDomain(pddl,stdout);
-    pddlPrintPDDLProblem(pddl,stdout);
+    DEBUG(pddlPrintPDDLDomain(pddl,stdout));
+    DEBUG(pddlPrintPDDLProblem(pddl,stdout));
 
     pddl_lifted_mgroups_infer_limits_t limits = PDDL_LIFTED_MGROUPS_INFER_LIMITS_INIT;
 	limits.max_candidates = 10000;
@@ -912,7 +912,7 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task, bool _binary_encod
                 if(mapOfVars.count(LFG_FREE)){
                     for(size_t args = 0 ; args < mapOfVars.at(LFG_FREE).size() ; args++){
                         if(mapOfVars.at(LFG_FREE)[args][2] != argTypes[mapOfVars.at(LFG_FREE)[args][0]]){
-                            cout << FAM << " : " << pred <<  " : AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA!!!!!!!!!!!!!!\n";
+                            //cout << FAM << " : " << pred <<  " : AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA!!!!!!!!!!!!!!\n";
                             matching = false;
                             break;
                         }
@@ -921,7 +921,7 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task, bool _binary_encod
                 if(mapOfVars.count(LFG_COUNTED)){
                     for(size_t args = 0 ; args < mapOfVars.at(LFG_COUNTED).size() ; args++){
                         if(mapOfVars.at(LFG_COUNTED)[args][2] != argTypes[mapOfVars.at(LFG_COUNTED)[args][0]] || !matching){
-                            cout << FAM << " : " << pred << " : AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA2!!!!!!!!!!!!!!\n";
+                            //cout << FAM << " : " << pred << " : AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA2!!!!!!!!!!!!!!\n";
                             matching = false;
                             break;
                         }
@@ -1183,7 +1183,6 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task, bool _binary_encod
 
         }
     }
-    cout << "OLA\n";
 
     //map<int, vector<int>> predicatesToFAM;
     //map<int, vector<int>> FAMToPredicates;
@@ -1600,11 +1599,12 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task, bool _binary_encod
     }
 
 
-    cout << "Uncovered facts (" << uncovered_facts.size() << " of " << all_facts.size() << "):" ;
-    for(size_t i = 0 ; i < uncovered_facts.size() ; i++){
+    cout << "Uncovered facts (" << uncovered_facts.size() << " of " << all_facts.size() << ")" << endl;
+    DEBUG(
+		for(size_t i = 0 ; i < uncovered_facts.size() ; i++){
         cout << " " << uncovered_facts[i];
 
-        pair<int, vector<int>> fact = all_facts[uncovered_facts[i]];
+        auto fact = all_facts[uncovered_facts[i]];
 
         cout << "Predicate : " << fact.first << "; Objects :";
         for(size_t j = 0 ; j < fact.second.size() ; j++){
@@ -1613,7 +1613,7 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task, bool _binary_encod
         cout << endl;
 
     }
-    cout<< endl;
+    cout << endl);
 
     factToString.clear();
     for (size_t predicate = 0; predicate < all_facts.size(); predicate++){
@@ -2458,6 +2458,7 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
                             }
                         }
 
+                		clauseNumber(effectImplications);
 
                         while(uncovered_facts.size() > lowerIndexGroundedPredicate && all_facts[uncovered_facts[lowerIndexGroundedPredicate]].first == effObjec.predicate_symbol){
                             std::vector<int> leftImplication;
@@ -2467,7 +2468,6 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
 
                             deleters[lowerIndexGroundedPredicate].push_back(causeVariable);
                             implies(solver,causeVariable,actionVarsTime[action]);
-                            clauseNumber(causeVariablesImplications);
 
                             leftImplication.push_back(actionVarsTime[action]);
 							int fact_index = uncovered_facts[lowerIndexGroundedPredicate];
@@ -2481,20 +2481,21 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
                                 if (parameterVarsTime[translateEffectToGlobalArguments[grounding]].count(all_facts[fact_index].second[grounding])){
                                     leftImplication.push_back(parameterVarsTime[translateEffectToGlobalArguments[grounding]][all_facts[fact_index].second[grounding]]);
                                         implies(solver,causeVariable,parameterVarsTime[translateEffectToGlobalArguments[grounding]][all_facts[fact_index].second[grounding]]);
-                                        clauseNumber(causeVariablesImplications);
                                 }else{
                                     invalidSupport = true;
                                     break;
                                 }
 
                             }
+                            
+							clauseNumber(causeVariablesImplications);
                             if (!invalidSupport)
                                 andImpliesNot(solver, leftImplication, currentTimeMutexPredicateVars[lowerIndexGroundedPredicate]);
                             else assertNot(solver, causeVariable);
                             leftImplication.clear();
 
                             lowerIndexGroundedPredicate++;
-
+                			clauseNumber(effectImplications);
                         }
                     } else {
 						if (debug_no_add_eff) continue;
@@ -2623,6 +2624,7 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
 								}
                             }
                         }
+                		clauseNumber(effectImplications);
 
                         while(uncovered_facts.size() > lowerIndexGroundedPredicate && all_facts[uncovered_facts[lowerIndexGroundedPredicate]].first == effObjec.predicate_symbol){
                             std::vector<int> leftImplication;
@@ -2644,19 +2646,20 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
                                 if (parameterVarsTime[translateEffectToGlobalArguments[grounding]].count(all_facts[fact_index].second[grounding])){
                                     leftImplication.push_back(parameterVarsTime[translateEffectToGlobalArguments[grounding]][all_facts[fact_index].second[grounding]]);
                                     implies(solver,causeVariable,parameterVarsTime[translateEffectToGlobalArguments[grounding]][all_facts[fact_index].second[grounding]]);
-                                    clauseNumber(causeVariablesImplications);
                                 }else{
                                     invalidSupport = true;
                                     break;
                                 }
                             }
+                            
+							clauseNumber(causeVariablesImplications);
                             if (!invalidSupport)
                                 andImplies(solver, leftImplication, currentTimeMutexPredicateVars[lowerIndexGroundedPredicate]);
                             else assertNot(solver, causeVariable);
                             leftImplication.clear();
-
-                            lowerIndexGroundedPredicate++;
-
+                            
+							lowerIndexGroundedPredicate++;
+                			clauseNumber(effectImplications);
                         }
 
                         //int fact = -1; // the number of the fact this action adds
@@ -2668,6 +2671,7 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
                         //implies(solver,causeVariable,parameterVar1);
                         //implies(solver,causeVariable,parameterVar2); // and so on
                     }
+                	clauseNumber(effectImplications);
 
                     //translateEffectToGlobalArguments.clear();
                 }
@@ -2864,24 +2868,27 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
         DEBUG(capsule.printVariables());
 
 
-		cout << "TOTAL VARIABLES " << " " << setw(8) << capsule.number_of_variables << endl;
+		cout << "TOTAL VARIABLES " << " " << setw(9) << setfill(' ') << capsule.number_of_variables << endl;
         int totalClauses = 0;
         for (auto [k,v] : clauseCounter){
-            cout << setw(30) << setfill('-') << k << " " << setw(8) << v << endl;
+            cout << setw(30) << setfill('-') << k << " " << setw(8) << setfill(' ') << v << endl;
             totalClauses += v;
         }
-        cout << setw(30) << setfill('-') << "TOTAL CLAUSES" << " " << setw(8) << totalClauses << " not accounted for " << get_number_of_clauses() - totalClauses << endl;
+        cout << setw(30) << setfill('-') << "TOTAL CLAUSES" << " " << setfill(' ') << setw(8) << totalClauses << " not accounted for " << get_number_of_clauses() - totalClauses << endl;
+        
+		
+		// first run the sat solve to get a better estimate of overall time
+		int state = ipasir_solve(solver);
+        timesplit(SATSOLVER);
 
 
         double totalTime = 0;
         for (auto [k,v] : timings){
-            cout << setw(30) << setfill('-') << k << " " << setw(8) << v << endl;
+            cout << setw(30) << setfill('-') << k << " " << setfill(' ') << fixed << setprecision(0) << setw(10) << v << endl;
             totalTime += v;
         }
-        cout << setw(30) << setfill('-') << "TOTAL Time" << " " << setw(8) << totalTime << endl;
+        cout << setw(30) << setfill('-') << "TOTAL Time" << " " << setfill(' ') << fixed << setprecision(0) << setw(10) << totalTime << endl;
 
-        int state = ipasir_solve(solver);
-        timesplit(SATSOLVER);
         if (state == 10){
             DEBUG(capsule.printVariableTruth(solver));
         
