@@ -387,6 +387,45 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task, bool _binary_encod
 		pddlTypesAdd(&pddl->type, t_name.c_str(), directparents[i]+1);
 
 	}
+    /* map<int, pair<string,int>> pleaseWork;
+    set<int> added;
+    map<int, int> translation;
+    pleaseWork.clear();
+    added.clear();
+    translation.clear();
+    for (int i = 0; i < task.type_names.size(); i++) {
+        string t_name = "pwl_"+task.type_names[i];
+        if(added.find(directparents[i]+1) != added.end() || directparents[i]+1 == 0){
+            added.insert(directparents[i]+1);
+            added.insert(i+1);
+            translation[i+1] = translation.size()+1;
+		    pddlTypesAdd(&pddl->type, t_name.c_str(), translation[directparents[i]+1]);
+        }else{
+            pleaseWork[i+1] = {t_name, directparents[i]+1};
+        }
+	}
+
+    set<int> toErase;
+    toErase.clear();
+    cout << !pleaseWork.empty() << endl;
+    while(!pleaseWork.empty()){
+        for(const auto& [id, p] : pleaseWork){
+            if( added.find(p.second) != added.end() ){
+                pddlTypesAdd(&pddl->type, p.first.c_str(), translation[p.second]);
+                added.insert(id);
+                translation[id] = translation.size()+1;
+                toErase.insert(id);
+            }   
+        }
+        for(int erase : toErase){
+            pleaseWork.erase(erase);
+        }
+        toErase.clear();
+    }
+    pleaseWork.clear();
+    added.clear();
+    translation.clear();
+    toErase.clear(); */
 
 	//bzero(&pddl->obj, sizeof(pddl->obj)); //Removed as suggested by Dan
 	//pddl->obj.htable = pddlHTableNew(objHash, objEq, NULL); //Removed as suggested by Dan
@@ -410,7 +449,6 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task, bool _binary_encod
     //pddlTypesPrint(&pddl->type, stdout);
 
     //pddlPredsInitEq(&pddl->pred); //Removed as suggested by Dan
-
     std::vector<int> powerLiftedPredicatesToCPDDLPredicates (task.predicates.size());
     std::vector<int> CPDDLPredicatesToPWLPredicates (task.predicates.size());
     for (tSize pred = 0; pred < task.predicates.size(); pred++) {
@@ -437,8 +475,6 @@ PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task, bool _binary_encod
     }
 
     //pddlPredsPrint(&pddl->pred, "Predicate", stdout);
-
-
 
 
 	DEBUG(

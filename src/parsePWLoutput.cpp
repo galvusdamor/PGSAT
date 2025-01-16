@@ -3,7 +3,114 @@
 #include <string>
 #include <bits/stdc++.h>
 
+#include <map>
+#include <vector>
+#include <unordered_map>
+#include <unordered_set>
+#include <queue>
+#include <set>
+
 using namespace std;
+
+bool dfsDetectCycle(int node, const unordered_map<int, vector<int>>& graph, unordered_map<int, int>& visited, unordered_map<int, int>& parent, vector<int>& cycle) {
+    visited[node] = 1; // Mark node as visiting
+
+    for (int neighbor : graph.at(node)) {
+        if (visited[neighbor] == 0) {
+            parent[neighbor] = node; // Set the parent of the neighbor
+            if (dfsDetectCycle(neighbor, graph, visited, parent, cycle)) {
+                return true;
+            }
+        } else if (visited[neighbor] == 1) {
+            // Cycle detected; backtrack to find the cycle
+            cycle.push_back(neighbor);
+            int current = node;
+            while (current != neighbor) {
+                cycle.push_back(current);
+                current = parent[current];
+            }
+            cycle.push_back(neighbor);
+            return true;
+        }
+    }
+
+    visited[node] = 2; // Mark node as fully processed
+    return false;
+}
+
+void detectAndPrintCycle(const unordered_map<int, vector<int>>& graph) {
+    unordered_map<int, int> visited; // Track visited state of each node
+    unordered_map<int, int> parent;  // Track the parent of each node
+    vector<int> cycle;               // Store nodes in the detected cycle
+
+    for (const auto& [node, _] : graph) {
+        if (visited[node] == 0) {
+            if (dfsDetectCycle(node, graph, visited, parent, cycle)) {
+                cout << "Cycle detected: ";
+                for (int i = cycle.size() - 1; i >= 0; --i) {
+                    cout << cycle[i] << " ";
+                }
+                cout << endl;
+                return;
+            }
+        }
+    }
+
+    cout << "No cycle detected in the graph." << endl;
+}
+
+bool isSubset(const vector<int>& subset, const vector<int>& superset) {
+    unordered_set<int> supersetSet(superset.begin(), superset.end());
+    for (int elem : subset) {
+        if (supersetSet.find(elem) == supersetSet.end()) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// Function to perform topological sorting
+vector<int> topologicalSort(const unordered_map<int, vector<int>>& graph) {
+    unordered_map<int, int> inDegree; // Stores the in-degree of each node
+    for (const auto& [node, edges] : graph) {
+        if (inDegree.find(node) == inDegree.end()) {
+            inDegree[node] = 0;
+        }
+        for (int neighbor : edges) {
+            inDegree[neighbor]++;
+        }
+    }
+
+    // Queue for nodes with in-degree 0
+    queue<int> zeroInDegree;
+    for (const auto& [node, degree] : inDegree) {
+        if (degree == 0) {
+            zeroInDegree.push(node);
+        }
+    }
+
+    vector<int> sortedOrder;
+    while (!zeroInDegree.empty()) {
+        int current = zeroInDegree.front();
+        zeroInDegree.pop();
+        sortedOrder.push_back(current);
+
+        // Reduce the in-degree of neighbors
+        for (int neighbor : graph.at(current)) { // Use .at() to ensure validity
+            inDegree[neighbor]--;
+            if (inDegree[neighbor] == 0) {
+                zeroInDegree.push(neighbor);
+            }
+        }
+    }
+
+    // If sortedOrder doesn't contain all nodes, there is a cycle
+    if (sortedOrder.size() != inDegree.size()) {
+        throw runtime_error("The graph contains a cycle and cannot be sorted topologically.");
+    }
+
+    return sortedOrder;
+}
 
 //WARNING: THERE IS CURRENTLY NO SUPPORT FOR CONSTANTS
 int main(int argc, char** argv) {
@@ -51,6 +158,7 @@ int main(int argc, char** argv) {
         PWLoutput >> name >> index;
         newTypesToIndex[name] = index;
         predNames.push_back(name);
+        typesToObjects[i];
     }
 
     PWLoutput >> _word >> num_predicates;
@@ -253,7 +361,12 @@ int main(int argc, char** argv) {
                         if(intersection.size() != 0 && intersection.size() != allObjsOfNewType.size() && intersection.size() != vec2.size()){
                             skip = true;
                             finalTotalTypes--;
-                            //break;
+                            break;
+                        }else if(intersection.size() != 0 && intersection.size() == allObjsOfNewType.size() && intersection.size() == vec2.size()){
+                            skip = true;
+                            finalTotalTypes--;
+                            nextBestTypeWhenCantCreateType = types;
+                            break;
                         }else if(intersection.size() == allObjsOfNewType.size() && typesToObjects[nextBestTypeWhenCantCreateType].size() > typesToObjects[types].size()){
                             nextBestTypeWhenCantCreateType = types;
                         }
@@ -281,6 +394,59 @@ int main(int argc, char** argv) {
         }
     }
 
+    unordered_map<int, vector<int>> graph;
+    vector<int> types;
+
+    // Step 1: Initialize graph and types list
+    for (const auto& [type, objects] : typesToObjects) {
+        types.push_back(type);
+        graph[type]; // Ensure every type has an entry in the graph
+    }
+
+    // Step 2: Build the graph based on subset relationships
+    for (int i = 0; i < types.size(); i++) {
+        for (int j = i+1; j < types.size(); j++) {
+            const auto& objectsI = typesToObjects[types[i]];
+            const auto& objectsJ = typesToObjects[types[j]];
+            vector<int> intersection;
+            set_intersection(objectsI.begin(), objectsI.end(), objectsJ.begin(), objectsJ.end(), back_inserter(intersection));
+            if(objectsI.empty() || objectsJ.empty()){
+                continue;
+            }
+            if (isSubset(objectsJ, objectsI)) {
+                graph[types[i]].push_back(types[j]);
+            }
+            // Check if objectsI is a subset of objectsJ
+            else if (isSubset(objectsI, objectsJ)) {
+                graph[types[j]].push_back(types[i]);
+            }
+        }
+    }
+
+    for (const auto& [type, edges] : graph) {
+        cout << "Type " << type << ": ";
+        for (int neighbor : edges) {
+            cout << neighbor << " ";
+        }
+        cout << endl;
+    }
+    detectAndPrintCycle(graph);
+    vector<int> sortedOrder = topologicalSort(graph);
+
+    predNames.resize(finalTotalTypes);
+    for(const auto& [key, value] : compositionOfNewSuperTypes){
+        string typeName = "";
+        for(auto t : key){
+            typeName += predNames[t];
+        }
+        predNames[value] = typeName;
+    }
+
+    map<int, int> translation;
+    for(size_t i = 0 ; i < sortedOrder.size() ; i++){
+        translation[sortedOrder[i]] = i;
+    }
+
     //cout << num_types << " " << predShouldBeType.size() << " " <<  predicatesCantBeTypes.size() << " " <<  finalTotalTypes << endl;
     cout << "Resetting input file." << endl;
 
@@ -290,6 +456,11 @@ int main(int argc, char** argv) {
     //ofstream typed_output("output.lifted.2");
     ofstream typed_output(argv[2]);
     cout << "Writing to file: " << argv[2] << endl;
+
+    /* while(getline(PWLoutput, line)){
+        typed_output << line << endl;
+    }
+    exit(0); */
     
     getline(PWLoutput, line);
     while(line.find("TYPES") == string::npos){
@@ -300,18 +471,11 @@ int main(int argc, char** argv) {
     typed_output << "TYPES " << finalTotalTypes << endl;
     for(int i = 0 ; i < num_types ; i++){
         getline(PWLoutput, line);
-        typed_output << line << endl;
     }
-    for(int i = num_types ; i < predNames.size() ; i++){
-        typed_output << predNames[i] << " " << i << endl;
-    }
-    for(const auto& [key, value] : compositionOfNewSuperTypes){
-        string typeName = "";
-        for(auto t : key){
-            typeName += predNames[t];
-        }
-        typed_output << typeName << " " << value << endl;
-    }
+
+    for(int i = 0 ; i < predNames.size() ; i++){
+        typed_output << predNames[sortedOrder[i]] << " " << i << endl;
+    }   
 
     //PREDICATES
     getline(PWLoutput, line);
@@ -327,9 +491,9 @@ int main(int argc, char** argv) {
         getline(PWLoutput, line);
         if(updatedPredicateTypes.count(i) && arguments > 0){
             getline(PWLoutput, line);
-            typed_output << updatedPredicateTypes[i][0];
+            typed_output << translation[updatedPredicateTypes[i][0]];
             for(size_t argTypes = 1 ; argTypes < updatedPredicateTypes[i].size() ; argTypes++){
-                typed_output << " " << updatedPredicateTypes[i][argTypes];
+                typed_output << " " << translation[updatedPredicateTypes[i][argTypes]];
             }
             typed_output << endl;
         }else if( arguments > 0){
@@ -349,7 +513,7 @@ int main(int argc, char** argv) {
         PWLoutput >> name >> number >> arguments;
         typed_output << name << " " << number << " " << typesOfEachObject[i].size();
         for(int types : typesOfEachObject[i]){
-            typed_output << " " << types;
+            typed_output << " " << translation[types];
         }
         typed_output << endl;
         // reading the argument types
@@ -403,7 +567,7 @@ int main(int argc, char** argv) {
         typed_output << name << " " << cost << " " << arguments << " " << preconditions << " " << effects << endl;
         for(int j = 0 ; j < arguments ; j++){
             PWLoutput >> arg >> index >> type;
-            typed_output << arg << " " << index << " " << actionArgTypes[name][index] << endl;
+            typed_output << arg << " " << index << " " << translation[actionArgTypes[name][index]] << endl;
         }
 
         for(int j = 0 ; j < preconditions ; j++){
