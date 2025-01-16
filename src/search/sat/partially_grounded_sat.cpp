@@ -1709,7 +1709,7 @@ map<int, map<vector<int>, vector<vector<int>>>> PartiallyGroundedSAT::generateFA
         }
     }
     for(size_t im = 0 ; im < inactiveMutexes.size() ; im++){
-        cout << "Im gonna set shit to false!!!!!!!\n";
+        //cout << "Im gonna set shit to false!!!!!!!\n";
         int fam = fam_based_mutexes[inactiveMutexes[im]].first;
         vector<int> fg = fam_based_mutexes[inactiveMutexes[im]].second;
         vector<vector<int>> cv = mutexFDRSATVarsTime[fam][fg];
