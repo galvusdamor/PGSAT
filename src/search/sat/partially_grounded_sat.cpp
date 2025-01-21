@@ -2928,6 +2928,7 @@ utils::ExitCode PartiallyGroundedSAT::solve(const Task &task, int limit, bool op
         
         } else {
             DEBUG(cout << "formula is UNSAT" << endl);
+			ipasir_release(solver);
         }
 
 
