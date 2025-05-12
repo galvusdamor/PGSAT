@@ -84,6 +84,7 @@ public:
     LiftedHeuristic(const Task &task, std::ifstream &in, int heuristic_type);
 
     int compute_heuristic(const DBState &s, const Task &task) final;
+    std::vector<GroundAtom> compute_reachable_facts(const DBState &s, const Task &task);
     void get_useful_facts(const Task &task, const lifted_heuristic::LogicProgram &lp);
 };
 

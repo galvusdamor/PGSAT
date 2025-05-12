@@ -82,7 +82,7 @@ private:
 	const bool debug_no_equal_vars = false;
 	const bool debug_no_parameter_binaries = false;
 public:
-    PartiallyGroundedSAT(const Task& task, bool _binary_encoding, bool _no_fam_groups, bool _no_goal_pruning);
+    PartiallyGroundedSAT(const Task& task, bool _binary_encoding, bool _no_fam_groups, bool _no_goal_pruning, std::string datalog_file_loc);
 	utils::ExitCode solve(const Task& task, int limit, bool optimal, bool incremental);
 };
 

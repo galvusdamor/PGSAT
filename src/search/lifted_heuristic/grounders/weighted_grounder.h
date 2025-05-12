@@ -23,12 +23,14 @@ enum {H_ADD, H_MAX};
 class WeightedGrounder : public Grounder {
     static int is_cheapest_path_to_achieve_fact(Fact &new_fact,
                                          std::unordered_set<Fact> &reached_facts,
+                                         std::vector<int> & all_facts,
                                          LogicProgram &lp);
 
     priority_queues::AdaptiveQueue<int> q;
 
     std::unordered_set<int> facts_in_edb;
     Achievers best_achievers;
+    std::vector<int> all_facts;
 
 protected:
     int heuristic_type;
@@ -61,6 +63,9 @@ public:
         return best_achievers;
     }
 
+    const std::vector<int> &get_all_facts() const {
+        return all_facts;
+    }
 
 };
 

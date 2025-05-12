@@ -54,6 +54,34 @@ int LiftedHeuristic::compute_heuristic(const DBState &s, const Task &task) {
     return h;
 }
 
+
+
+std::vector<GroundAtom> LiftedHeuristic::compute_reachable_facts(const DBState &s, const Task &task) {
+    transform_state_into_edb(s, task.nullary_predicates);
+    grounder.ground(logic_program, target_predicate);
+
+
+    std::vector<GroundAtom> reachable;
+    for (int achiever : grounder.get_all_facts()) {
+        const lifted_heuristic::Fact& fact = logic_program.get_fact_by_index(achiever);
+        if (indices_map.is_auxiliary_predicate(fact.get_predicate_index()))
+            continue;
+        int task_predicate_index = indices_map.get_inverse_predicate(fact.get_predicate_index());
+        GroundAtom ga;
+        if (task.nullary_predicates.count(task_predicate_index) > 0) {
+            useful_nullary_atoms[task_predicate_index] = true;
+        }
+        for (const auto  &arg : fact.get_arguments()) {
+            ga.push_back(indices_map.get_inverse_object(arg.get_index()));
+        }
+        reachable.push_back(ga);
+    }
+
+    return reachable;
+}
+
+
+
 void LiftedHeuristic::transform_state_into_edb(const DBState &s,
                                                const unordered_set<int> &nullaries) {
     vector<lifted_heuristic::Fact> edb;

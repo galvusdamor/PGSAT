@@ -84,7 +84,7 @@ int main(int argc, char *argv[]) {
 #endif
 	} else if (opt.get_search_engine() == "pgsat"){
 #ifndef CMAKE_NO_SAT
-        std::unique_ptr<PartiallyGroundedSAT> liftedSAT(new PartiallyGroundedSAT(task, opt.get_binary(), opt.get_nofam(), opt.get_nogoalpruning()));
+        std::unique_ptr<PartiallyGroundedSAT> liftedSAT(new PartiallyGroundedSAT(task, opt.get_binary(), opt.get_nofam(), opt.get_nogoalpruning(), opt.get_datalog_file()));
     	try {
     	    auto exitcode = liftedSAT->solve(task,opt.get_planLength(), opt.get_optimal(), opt.get_incremental());
     	    utils::report_exit_code_reentrant(exitcode);

@@ -24,6 +24,7 @@ int WeightedGrounder::ground(LogicProgram &lp, int goal_predicate) {
     for (const Fact &f : lp.get_facts()) {
         q.push(f.get_cost(), f.get_fact_index());
         facts_in_edb.insert(f.get_fact_index());
+        all_facts.push_back(f.get_fact_index());
         reached_facts.insert(f);
     }
     while (!q.empty()) {
@@ -41,7 +42,7 @@ int WeightedGrounder::ground(LogicProgram &lp, int goal_predicate) {
                 cout << endl;
             }*/
             //exit(1);
-            return current_fact.get_cost();
+            //return current_fact.get_cost();
         }
         if (current_fact.get_cost() < cost) {
             continue;
@@ -72,7 +73,7 @@ int WeightedGrounder::ground(LogicProgram &lp, int goal_predicate) {
             // Note: using for loop for performance reasons, this is a heavily used loop
             for (unsigned i=0, sz=newfacts.size(); i < sz; ++i) {
                 auto& new_fact = newfacts[i];
-                int id = is_cheapest_path_to_achieve_fact(new_fact, reached_facts, lp);
+                int id = is_cheapest_path_to_achieve_fact(new_fact, reached_facts, all_facts, lp);
                 if (id!=HAS_CHEAPER_PATH) {
                     q.push(new_fact.get_cost(), id);
                 }
@@ -84,12 +85,14 @@ int WeightedGrounder::ground(LogicProgram &lp, int goal_predicate) {
 
 int WeightedGrounder::is_cheapest_path_to_achieve_fact(Fact &new_fact,
                                                        unordered_set<Fact> &reached_facts,
+                                                       std::vector<int> & all_facts,
                                                        LogicProgram &lp) {
     const auto& it = reached_facts.find(new_fact);
 
     if (it == reached_facts.end()) {  // The fact wasn't reached yet
         new_fact.set_fact_index();
         reached_facts.insert(new_fact);
+        all_facts.push_back(new_fact.get_fact_index());
         lp.insert_fact(new_fact);
         return new_fact.get_fact_index();
     }
@@ -372,6 +375,7 @@ void WeightedGrounder::compute_best_achievers(const Fact &fact, const LogicProgr
     }
     cout << endl;*/
 }
+
 
 void WeightedGrounder::create_rule_matcher(const LogicProgram &lp) {
     // Loop over rule conditions

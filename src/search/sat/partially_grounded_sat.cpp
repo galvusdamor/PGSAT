@@ -4,10 +4,12 @@
 #include "ipasir.h"
 #include "../action.h"
 #include "../search_engines/utils.h"
+#include "../lifted_heuristic/lifted_heuristic.h"
 #include <unordered_set>
 #include <cassert>
 #include <chrono>
 #include <iomanip>
+#include <fstream>
 
 #include "pddl/pddl.h"
 #include "src/internal.h"
@@ -349,12 +351,18 @@ int PartiallyGroundedSAT::get_different_var(void* solver, sat_capsule & capsule,
 }
 
 
-PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task, bool _binary_encoding, bool _no_fam_groups, bool _no_goal_pruning) :
+PartiallyGroundedSAT::PartiallyGroundedSAT(const Task & task, bool _binary_encoding, bool _no_fam_groups, bool _no_goal_pruning, std::string datalog_file_loc) :
     BaseSATEncoding(task), binary_encoding(_binary_encoding), no_fam_groups(_no_fam_groups), no_goal_pruning(_no_goal_pruning){
     _start=clock();
     
     cout << "Entering PG SAT" << endl;
 	int numActions = task.actions.size();
+
+    std::ifstream datalog_file(datalog_file_loc);
+    LiftedHeuristic * hmax =  new LiftedHeuristic(task, datalog_file, lifted_heuristic::H_MAX);
+    vector<GroundAtom> reachable_facts = hmax->compute_reachable_facts(task.initial_state,task); 
+
+
 #ifdef CMAKE_NO_CPDDL 
 	cout << "Compiled without CPDDL support" << endl;
    	exit_with(utils::ExitCode::SEARCH_UNSUPPORTED);
